@@ -83,7 +83,7 @@ lib/allowlist.js      版本探测白名单（安全边界所在）
 cordis.patch.yml      bundle 层：挂一行宿主条目
 locale/{en,zh}.json   插件页标题与简介（官方 meta 约定）
 assets/icon.svg       插件图标
-test/                 26 项断言 + 宿主冒烟测试
+test/                 27 项断言 + 宿主冒烟测试
 ```
 
 ## 安装 / 卸载
@@ -131,7 +131,7 @@ plugin_manager(action: "install_bundle", target: "link:/path/to/dsh-cli-inventor
 ## 测试
 
 ```bash
-npm test          # 26 项断言：PATH 解析 / 分类 / 白名单 / 客户端纯逻辑 / 打包契约 / 结构契约
+npm test          # 27 项断言：PATH 解析 / 分类 / 白名单 / 客户端纯逻辑 / 打包契约 / 结构契约
 node test/host-smoke.mjs   # 宿主冒烟：真的读 PATH、真的取版本、验证来源守卫与缓存
 ```
 

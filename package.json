@@ -1,6 +1,6 @@
 {
   "name": "dsh-cli-inventory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "DSH 环境与 CLI：在「设置」里列出这台机器装了哪些命令行工具、版本与路径；只读，仅对内置白名单执行以取版本",
   "author": "李敖 (oliblue)",
