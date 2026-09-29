@@ -65,7 +65,8 @@ DSH 的设置里只有账户 / 通用 / 模型 / 插件 / 智能体预设五页 
 
 | 要素 | 具体做法 |
 |---|---|
-| 层级与间距 | 根 `.section`（gap **14**、max-width 760、container）→ `.catalog`（gap **12**）→ 搜索框与各组。**间距差在这 14/12 两层上** |
+| 顶部标题区 | **section 自己渲染**（框架不代劳）：`h2.heading`（`margin:0;18px;600`）+ `p.intro`（`margin:0;13px;三级色`）。缺了它顶部就是一片空白 |
+| 层级与间距 | 根 `.section`（gap **12**、max-width 760）→ `heading` / `intro` / `.panel`（`padding-top:2px`）→ `.catalog`（gap **12**、container）→ 搜索框与各组 |
 | 搜索框 | 外层是 **`<label>`**（点标签即聚焦），内嵌放大镜（`absolute;left:12px`）、`visuallyHidden` 文案、36px 高、`.5px` 描边、`color-mix` 焦点环 |
 | 组 | `.groupTitleRow`（`min-height:36px`，chevron + 标题）+ `p.groupSub`（若干 `<span>` 用 `·` 分隔，**计数也是其中一项**）+ `.groupBody` |
 | **卡片可点击展开** | `li.card[data-open]` 内是 **`button.cardContent`**（`aria-expanded` + `aria-controls`），右侧 `.cardTrailing` 放 **chevron**（展开时 `rotate(180deg)`）；**同时只展开一张卡**（官方 `expanded: string | null`） |

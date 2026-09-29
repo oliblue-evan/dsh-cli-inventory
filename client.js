@@ -184,6 +184,8 @@ window.__ModuleLoader__.load({
 
     const ZH = {
       'nav': '环境与能力',
+      'heading': '环境与能力',
+      'intro': '这个 Agent 能操作什么：工具、技能、MCP，以及本机的命令行工具与运行时。',
       'search': '搜索工具、技能、命令…',
       'loading': '正在读取…',
       'retry': '重试',
@@ -222,6 +224,8 @@ window.__ModuleLoader__.load({
 
     const EN = {
       'nav': 'Environment & capabilities',
+      'heading': 'Environment & capabilities',
+      'intro': 'What this agent can actually operate: tools, skills, MCP, plus local CLIs and runtimes.',
       'search': 'Search tools, skills, commands…',
       'loading': 'Reading…',
       'retry': 'Retry',
@@ -302,15 +306,17 @@ window.__ModuleLoader__.load({
     // ========================================================================
 
     const CSS = `
-.ciSection{container:ci-inventory/inline-size;display:flex;flex-direction:column;gap:14px;width:100%;max-width:760px;
-  color:var(--dsw-alias-label-primary)}
+.ciSection{display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--dsw-alias-label-primary)}
+.ciHeading{margin:0;font-size:18px;font-weight:600}
+.ciIntro{margin:0;font-size:13px;color:var(--dsw-alias-label-tertiary)}
+.ciPanel{min-width:0;padding-top:2px}
 .ciStatus{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary)}
 .ciStatusWithDot{display:inline-flex;align-items:center;gap:6px}
 .ciFailure{display:flex;align-items:center;gap:10px;font-size:13px;line-height:20px;color:var(--dsw-alias-state-error-primary)}
 .ciFailure p{margin:0}
 .ciFailure button{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);padding:4px 10px;
   background:transparent;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer}
-.ciCatalog{display:flex;flex-direction:column;gap:12px}
+.ciCatalog{container:ci-inventory/inline-size;display:flex;flex-direction:column;gap:12px}
 .ciSearch{position:relative;display:flex;align-items:center;width:100%;color:var(--dsw-alias-label-tertiary)}
 .ciSearch>svg{position:absolute;left:12px;pointer-events:none}
 .ciSearch input{width:100%;height:36px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);
@@ -609,6 +615,11 @@ window.__ModuleLoader__.load({
       };
 
       return h('div', { className: 'ciSection', 'aria-busy': report === null && error === null },
+        // 标题区由 section 自己渲染 —— 框架不会代劳，没有它顶部就是一片空白
+        // （这正是与官方「内置插件」页对不上的地方）。
+        h('h2', { className: 'ciHeading' }, t('heading')),
+        h('p', { className: 'ciIntro' }, t('intro')),
+        h('div', { className: 'ciPanel' },
         error === null ? null : h('div', { className: 'ciFailure' },
           h('p', { role: 'alert' }, t('failed', { reason: error })),
           h('button', { type: 'button', onClick: () => setRequest((value) => value + 1) }, t('retry'))),
@@ -630,8 +641,8 @@ window.__ModuleLoader__.load({
           renderGroup('skills', skills, capabilityCards(skills), 'empty.skills'),
           renderGroup('mcp', mcpTools, capabilityCards(mcpTools), 'empty.mcp'),
           rows.runtimes.length === 0 ? null : renderGroup('runtimes', rows.runtimes, commandCards(rows.runtimes), 'empty'),
-          rows.user.length === 0 ? null : renderGroup('user', rows.user, commandCards(rows.user), 'empty')),
-        report === null ? null : h('p', { className: 'ciNote' }, t('note')));
+          rows.user.length === 0 ? null : renderGroup('user', rows.user, commandCards(rows.user), 'empty'),
+          h('p', { className: 'ciNote' }, t('note')))));
     }
 
     // ========================================================================
