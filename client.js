@@ -323,13 +323,15 @@ window.__ModuleLoader__.load({
           (document.head || document.documentElement).appendChild(style);
           return () => { style.remove(); };
         }, 'cli-inventory: styles');
-        ctx.slots.inject('settings.section', () => ctx.slots.register({
+        // 同 usage-pill 的教训：slots.inject 返回 dispose 函数，必须由 ctx.effect 管住，
+        // 否则插件被 dispose 后这个注册会泄漏，出现「组件还在、样式没了」。
+        ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
           id: 'cli-inventory',
           order: 30,
           label: () => tn('nav'),
           locale: NS,
-        }, CliInventorySection));
+        }, CliInventorySection)), 'cli-inventory: settings section');
       },
     };
   },
