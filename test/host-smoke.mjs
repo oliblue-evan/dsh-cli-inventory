@@ -25,6 +25,8 @@ const ctx = {
     const dispose = fn();
     return () => { if (typeof dispose === 'function') dispose(); };
   },
+  // 真实宿主总是有 ctx.on（cordis 核心）；这里补上让插件走真实路径。
+  on() { return () => {}; },
   webServer: {
     register(route) {
       routes.push(route);
@@ -190,11 +192,21 @@ console.log('✓ 能力段容错：宿主未提供 tools/skills 服务时如实�
       { name: 'read', description: '读文件', parameters: { type: 'object', properties: { file_path: {}, offset: {} }, required: ['file_path'] } },
       { name: 'load_workspace_dependencies', description: '全局那个' },
     ];
+    let agentListener;
+    const seenScopes = [];
     const scopedCtx = {
       effect(fn) { const dispose = fn(); return () => { if (typeof dispose === 'function') dispose(); }; },
+      on(name, listener) { if (name === 'agent/created') agentListener = listener; return () => {}; },
       webServer: { register(r) { scopedRoutes.push(r); return () => {}; } },
       get(name) {
-        if (name === 'tools') return { schemas: (scope) => (scope === undefined ? globalOnly : scoped) };
+        if (name === 'tools') {
+          return {
+            schemas: (scope) => {
+              seenScopes.push(scope);
+              return scope === undefined ? globalOnly : scoped;
+            },
+          };
+        }
         if (name === 'agentPresets') {
           return {
             resolve: async () => ({ id: 'default', isDefault: true }),
@@ -222,7 +234,26 @@ console.log('✓ 能力段容错：宿主未提供 tools/skills 服务时如实�
     assert.deepEqual(withScope.capabilities.tools.find((entry) => entry.name === 'read').required, ['file_path']);
     assert.equal(acquired, 1, '应借一次作用域租约');
     assert.equal(disposed, 1, '读完必须释放租约（AsyncDisposable）');
-    assert.deepEqual(withScope.capabilities.toolsScope, { preset: 'default', scoped: true });
+    // 逐字段断言（不用 deepEqual：脚本里对 undefined 键的呈现不稳定）
+    assert.equal(withScope.capabilities.toolsScope.preset, 'default');
+    assert.equal(withScope.capabilities.toolsScope.scoped, true);
+    assert.equal(withScope.capabilities.toolsScope.live, false, '没有 agent 时应标注为冷启动视图');
+
+    // 一旦有 agent/created，就该改用**该会话的作用域**（那里才有会话级工具）
+    assert.equal(typeof agentListener, 'function', '应注册 agent/created 监听');
+    const sessionScope = { tag: 'agent-scope' };
+    agentListener.call(sessionScope, { agent: { id: 'session-abc' } });
+    const live = await new Promise((resolve, reject) => {
+      const res = { statusCode: 0, setHeader() {}, end(body) { resolve(JSON.parse(String(body))); } };
+      Promise.resolve(scopedRoutes[0].handler(
+        { method: 'GET', headers: { host: '127.0.0.1:19387' } }, res,
+      )).catch(reject);
+    });
+    assert.deepEqual(seenScopes[seenScopes.length - 1], sessionScope, '有 agent 后应把该作用域交给 schemas()');
+    assert.equal(live.capabilities.toolsScope.live, true, '应标注来自会话视图');
+    assert.equal(live.capabilities.toolsScope.sessionId, 'session-abc');
+    console.log('✓ 工具视图优先用会话作用域：live =', live.capabilities.toolsScope.live,
+      '· sessionId =', live.capabilities.toolsScope.sessionId);
     console.log('✓ 工具按作用域读取：', withScope.capabilities.tools.length, '个（租约获取', acquired, '/ 释放', disposed, '）· 预设', withScope.capabilities.toolsScope.preset);
   }
   console.log('✓ 能力段读取：工具', caps.capabilities.tools.length, '个 · MCP 服务器',

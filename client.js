@@ -214,6 +214,7 @@ window.__ModuleLoader__.load({
       'group.user': '你自己安装的',
       'sub.tools': '来自宿主工具注册表',
       'sub.toolsScope': '按预设 {preset}',
+      'sub.toolsLive': '当前会话视图',
       'sub.skills': '来自 ~/.dsh/skills 与技能提供者',
       'sub.mcp': '服务器：{servers}',
       'sub.mcpNone': '未配置服务器',
@@ -254,6 +255,7 @@ window.__ModuleLoader__.load({
       'group.user': 'Installed by you',
       'sub.tools': 'from the host tool registry',
       'sub.toolsScope': 'as preset {preset}',
+      'sub.toolsLive': 'current session view',
       'sub.skills': 'from ~/.dsh/skills and skill providers',
       'sub.mcp': 'servers: {servers}',
       'sub.mcpNone': 'no server configured',
@@ -577,10 +579,14 @@ window.__ModuleLoader__.load({
         const facts = [String(count) + ' ' + t('countUnit')];
         if (key === 'tools') {
           facts.push(t('sub.tools'));
-          // 工具是从"预设作用域"读的（不是全局视图），来源如实写出来
+          // 工具视图的来源如实写出来：**当前会话**（含 subagent/teams/schedule 这类
+          // 会话级工具）还是**冷启动的预设视图**（少了那批）。
           const scope = capabilities.toolsScope;
-          if (scope !== null && typeof scope === 'object' && scope.scoped === true && typeof scope.preset === 'string') {
-            facts.push(t('sub.toolsScope', { preset: scope.preset }));
+          if (scope !== null && typeof scope === 'object') {
+            if (scope.live === true) facts.push(t('sub.toolsLive'));
+            else if (scope.scoped === true && typeof scope.preset === 'string') {
+              facts.push(t('sub.toolsScope', { preset: scope.preset }));
+            }
           }
         }
         else if (key === 'skills') facts.push(t('sub.skills'));

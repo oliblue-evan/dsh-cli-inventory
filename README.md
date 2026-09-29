@@ -151,12 +151,26 @@ DSH 的设置里只有账户 / 通用 / 模型 / 插件 / 智能体预设五页 
    只如实显示 0，绝不让整页失败。
 
    **工具必须带作用域读** —— 这是这一页准不准的关键。`tools.schemas(scope?)` 的契约写着
-   "scope 是 the viewing scope (the agent)；省略 = 全局视图"。省略时实测只有 **1 个**
-   （`load_workspace_dependencies` 这类不带作用域的），而 Agent 真正拿到的是 **40 个**：
-   `read`/`write`/`bash`/`web_search`/`subagent`… 都注册在**预设作用域**里。
-   所以宿主借一个作用域租约
-   （`agentPresets.acquireScope()`，官方用途是 cold transcript presentation：拿租约 → 读 → 释放），
-   读完立刻 `AsyncDispose` 释放；拿不到就退回全局视图并在界面上如实标注。
+   "scope 是 the viewing scope (the agent)；省略 = 全局视图"。实测三种视图的差别很大：
+
+   | 视图 | 工具数 | 拿到什么 |
+   |---|---|---|
+   | 省略 scope（全局） | **1** | 只有 `load_workspace_dependencies` 这类不带作用域的 |
+   | 预设作用域（冷启动） | **26** | 静态组合的那批：read/write/edit/bash/grep/web_search… |
+   | **当前会话作用域** | **40** | 上面 26 个 **+ 会话级组合的 14 个**：`subagent`、`spawn_teammate`、`team_task_*`、`schedule_*`、`cordis_inspect_*`、`plugin_manager` |
+
+   差的那 14 个是**随会话组合**的（服务契约原话：*"delegation tools are composed for a
+   Session"*），冷启动视图里没有。所以宿主**优先用当前会话的作用域**：
+
+   - `agent/created` 事件的契约是 `(this: Scoped<Agent>, payload: { agent, … })`，
+     `this` 就是该 agent 的作用域对象，而 `ScopeKey` 就是 `object` —— 拿它当 scope 调
+     `tools.schemas(this)` 即可读到该会话真实的工具视图（监听用 `ctx.effect` 管住）；
+   - 还没创建过 agent（刚启动）时，借一个预设作用域租约
+     （`agentPresets.acquireScope()`，官方用途是 cold transcript presentation：拿租约 → 读 → 释放），
+     读完立刻 `AsyncDispose` 释放；
+   - 两者都没有就退回全局视图。
+
+   界面上**如实标注是哪一种**：`当前会话视图` / `按预设 <id>`。
 
    **MCP** 不需要翻配置：`dsh-mcp-client` 把工具注册成 `mcp__<服务器>__<工具>`，
    服务器名直接从工具名反推（只按**第一个** `__` 切 —— 服务器名里出现单个下划线很常见，

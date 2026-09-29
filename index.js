@@ -178,6 +178,23 @@ async function scanCommands() {
   };
 }
 
+/**
+ * 最近一次创建的 Agent 作用域。
+ *
+ * 【为什么需要】会话级组合的工具（`subagent`、`spawn_teammate`、`team_task_*`、
+ * `schedule_*`、`cordis_inspect_*`、`plugin_manager`）只在 **Agent 自己的视图**里可见 ——
+ * 服务契约的原话是 "delegation tools are composed for a Session"。借预设作用域
+ * （`agentPresets.acquireScope()`，官方用途是 cold transcript presentation）读到的是
+ * **冷启动视图**：实测 26 个，而当前会话实际有 40 个。
+ *
+ * `agent/created` 事件的契约是 `(this: Scoped<Agent>, payload: { agent, … })` ——
+ * `this` 就是该 agent 的作用域对象，而 `ScopeKey` 就是 `object`，所以拿它当 scope
+ * 调 `tools.schemas(this)` 即可读到该会话真实的工具视图。
+ */
+let liveAgentScope;
+/** 最近一次创建的那个 agent 的 id（只用于界面标注来源）。 */
+let liveAgentId;
+
 /** 运行时目录里，值得列出来的可执行文件。 */
 const RUNTIME_BINARIES = ['node', 'python3'];
 
@@ -279,7 +296,9 @@ async function scanCapabilities(ctx) {
       const presets = ctx.get('agentPresets');
       let lease;
       let presetId;
-      if (presets !== undefined && typeof presets.acquireScope === 'function') {
+      // 首选当前会话的 agent 作用域（视图最全）；拿不到才借预设作用域
+      const usingLive = liveAgentScope !== undefined;
+      if (!usingLive && presets !== undefined && typeof presets.acquireScope === 'function') {
         try {
           if (typeof presets.resolve === 'function') {
             const preset = await presets.resolve();
@@ -291,9 +310,15 @@ async function scanCapabilities(ctx) {
         }
       }
       try {
-        const visible = registry.schemas(lease === undefined ? undefined : lease.key);
+        const effectiveScope = usingLive ? liveAgentScope : (lease === undefined ? undefined : lease.key);
+        const visible = registry.schemas(effectiveScope);
         if (Array.isArray(visible)) {
-          toolsScope = { preset: presetId, scoped: lease !== undefined };
+          toolsScope = {
+            preset: presetId,
+            scoped: effectiveScope !== undefined,
+            live: usingLive,
+            sessionId: usingLive ? liveAgentId : undefined,
+          };
           for (const raw of visible) {
             const entry = normalizeTool(raw);
             if (entry === null) continue;
@@ -424,6 +449,19 @@ function apply(ctx) {
       }
     },
   }), 'cli-inventory: /api/cli-inventory/list route');
+  // 记下存活 Agent 的作用域：会话级工具只在它自己的视图里可见。
+  // 用普通 function 而不是箭头函数 —— 作用域是通过 `this` 传进来的。
+  // ctx.on 是 cordis 核心能力（官方指南也这么用），这里仍加一层守卫：
+  // 监听不到 agent 只会退化成"冷启动视图"，不该让整个插件挂掉。
+  ctx.effect(() => (typeof ctx.on === 'function'
+    ? ctx.on('agent/created', function captureAgentScope(payload) {
+      liveAgentScope = this;
+      liveAgentId = payload !== null && typeof payload === 'object' && payload.agent !== null
+        && typeof payload.agent === 'object' && typeof payload.agent.id === 'string'
+        ? payload.agent.id
+        : undefined;
+    })
+    : undefined), 'cli-inventory: agent scope capture');
 }
 
 export { apply, inject, name };
