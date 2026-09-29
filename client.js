@@ -391,9 +391,11 @@ window.__ModuleLoader__.load({
      * @returns 内联 SVG（宽高写死：无 CSS 时才不会撑满容器）。
      */
     function ChevronDown() {
+      // 线宽 1 与尺寸 12 都照官方：ICON_REGULAR_STROKE = 1（medium 才 1.3）、
+      // 内置插件页给 chevron 传的就是 size={12}。
       return h('svg', {
         viewBox: '0 0 12 12', width: 12, height: 12, 'aria-hidden': true, fill: 'none', stroke: 'currentColor',
-        strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'ciChevron',
+        strokeWidth: 1, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'ciChevron',
       }, h('path', { d: 'M2.5 4.5 6 8l3.5-3.5' }));
     }
 
@@ -402,9 +404,10 @@ window.__ModuleLoader__.load({
      * @returns 内联 SVG。
      */
     function SearchIcon() {
+      // 官方 IconProps 的 size 默认 14（搜索框里也没传 size），线宽同为 1。
       return h('svg', {
-        viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': true, fill: 'none', stroke: 'currentColor',
-        strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round',
+        viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true, fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1, strokeLinecap: 'round', strokeLinejoin: 'round',
       }, h('circle', { cx: 7, cy: 7, r: 4.5 }), h('path', { d: 'M10.5 10.5 14 14' }));
     }
 
