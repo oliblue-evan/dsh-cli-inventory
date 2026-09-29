@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Environment & CLIs",
+    "description": "Lists the command-line tools installed on this machine — version and path — as a page inside Settings. Read-only: only an allowlisted set is ever executed to read its version."
+  }
+}

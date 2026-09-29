@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Environment &amp; CLIs">
+  <!-- 终端提示符：方框 + 尖括号 + 光标下划线，取"命令行工具"之意。 -->
+  <rect x="3.4" y="5.6" width="25.2" height="20.8" rx="6"
+        fill="none" stroke="#12B886" stroke-width="2.4"/>
+  <path d="M10 12.4l3.6 3.6-3.6 3.6" fill="none" stroke="#12B886"
+        stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M16.6 20.2h6" fill="none" stroke="#12B886"
+        stroke-width="2.4" stroke-linecap="round"/>
+</svg>

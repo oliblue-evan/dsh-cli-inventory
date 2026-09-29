@@ -1,0 +1,58 @@
+{
+  "name": "dsh-cli-inventory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH 环境与 CLI：在「设置」里列出这台机器装了哪些命令行工具、版本与路径；只读，仅对内置白名单执行以取版本",
+  "author": "李敖 (oliblue)",
+  "license": "MIT",
+  "icon": "assets/icon.svg",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./assets/*": "./assets/*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oliblue-evan/dsh-cli-inventory.git"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "lib",
+    "locale",
+    "assets",
+    "README.md"
+  ],
+  "disclosure": {
+    "cloud": false,
+    "network": [],
+    "offlineMode": true,
+    "apiKeys": [],
+    "permissions": [
+      "filesystem:read:PATH directories",
+      "process:spawn:allowlisted version probes"
+    ],
+    "jurisdiction": [],
+    "retention": "none"
+  }
+}

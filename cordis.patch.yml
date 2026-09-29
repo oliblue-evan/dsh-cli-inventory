@@ -1,0 +1,6 @@
+# 环境与 CLI bundle 层：挂一行宿主条目。
+# 宿主半边只做一件事：把 PATH 里有什么命令、什么版本整理成 JSON（只读、只对白名单取版本）。
+# 界面（设置页里的一个页面）在浏览器半边完成。
+- insert:
+    - id: cli-inventory
+      name: 'dsh-cli-inventory'
