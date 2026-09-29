@@ -214,7 +214,6 @@ window.__ModuleLoader__.load({
       'group.user': '你自己安装的',
       'sub.tools': '来自宿主工具注册表',
       'sub.toolsScope': '按预设 {preset}',
-      'sub.toolsLive': '当前会话视图',
       'sub.skills': '来自 ~/.dsh/skills 与技能提供者',
       'sub.mcp': '服务器：{servers}',
       'sub.mcpNone': '未配置服务器',
@@ -237,7 +236,7 @@ window.__ModuleLoader__.load({
       'noVersion': '未取版本',
       'hidden': '另有 {count} 项未显示，用上面的搜索缩小范围',
       'failed': '读取失败：{reason}',
-      'note': '工具与技能来自宿主注册表（只读且容错：服务不可用就显示 0）。命令行工具只扫「你自己装的」目录 —— 系统目录有上千项、没有参考价值，故不列出；且仅对内置白名单执行 `--version` 取版本。',
+      'note': '工具是**预设组合视图**：随会话才组合出来的那批（委派、团队、定时任务、inspect 等）在插件侧读不到，故不列出；技能来自技能注册表。宿主服务取不到时如实显示 0。命令行工具只扫「你自己装的」目录 —— 系统目录上千项且无参考价值，不列出；且仅对内置白名单执行 `--version` 取版本。',
     };
 
     const EN = {
@@ -255,7 +254,6 @@ window.__ModuleLoader__.load({
       'group.user': 'Installed by you',
       'sub.tools': 'from the host tool registry',
       'sub.toolsScope': 'as preset {preset}',
-      'sub.toolsLive': 'current session view',
       'sub.skills': 'from ~/.dsh/skills and skill providers',
       'sub.mcp': 'servers: {servers}',
       'sub.mcpNone': 'no server configured',
@@ -278,7 +276,7 @@ window.__ModuleLoader__.load({
       'noVersion': 'no version',
       'hidden': '{count} more hidden — narrow it with the search above',
       'failed': 'Failed to read: {reason}',
-      'note': 'Tools and skills come from the host registries (read-only, fault-tolerant: an unavailable service reads as 0). The command list scans only the directories you installed into — system directories hold a thousand-odd entries and are not listed — and executes `--version` for a built-in allowlist only.',
+      'note': 'Tools are the **preset composition view**: the ones composed per session (delegation, teams, schedules, inspect …) are not reachable from a plugin, so they are not listed. Skills come from the skill registry; an unavailable host service reads as 0. The command list scans only the directories you installed into — system directories are not listed — and executes `--version` for a built-in allowlist only.',
     };
 
     /**
@@ -582,11 +580,9 @@ window.__ModuleLoader__.load({
           // 工具视图的来源如实写出来：**当前会话**（含 subagent/teams/schedule 这类
           // 会话级工具）还是**冷启动的预设视图**（少了那批）。
           const scope = capabilities.toolsScope;
-          if (scope !== null && typeof scope === 'object') {
-            if (scope.live === true) facts.push(t('sub.toolsLive'));
-            else if (scope.scoped === true && typeof scope.preset === 'string') {
-              facts.push(t('sub.toolsScope', { preset: scope.preset }));
-            }
+          if (scope !== null && typeof scope === 'object'
+            && scope.scoped === true && typeof scope.preset === 'string') {
+            facts.push(t('sub.toolsScope', { preset: scope.preset }));
           }
         }
         else if (key === 'skills') facts.push(t('sub.skills'));

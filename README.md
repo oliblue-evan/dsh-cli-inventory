@@ -151,27 +151,29 @@ DSH 的设置里只有账户 / 通用 / 模型 / 插件 / 智能体预设五页 
    只如实显示 0，绝不让整页失败。
 
    **工具必须带作用域读** —— 这是这一页准不准的关键。`tools.schemas(scope?)` 的契约写着
-   "scope 是 the viewing scope (the agent)；省略 = 全局视图"。实测三种视图的差别很大：
+   "scope 是 the viewing scope (the agent)；省略 = 全局视图"。实测：
 
    | 视图 | 工具数 | 拿到什么 |
    |---|---|---|
    | 省略 scope（全局） | **1** | 只有 `load_workspace_dependencies` 这类不带作用域的 |
-   | 预设作用域（冷启动） | **26** | 静态组合的那批：read/write/edit/bash/grep/web_search… |
-   | **当前会话作用域** | **40** | 上面 26 个 **+ 会话级组合的 14 个**：`subagent`、`spawn_teammate`、`team_task_*`、`schedule_*`、`cordis_inspect_*`、`plugin_manager` |
+   | 预设作用域（`acquireScope()` 的 generation key） | **26** | 静态组合的那批：read/write/edit/bash/grep/web_search… |
 
-   差的那 14 个是**随会话组合**的（服务契约原话：*"delegation tools are composed for a
-   Session"*），冷启动视图里没有。所以宿主**优先用当前会话的作用域**：
+   而**当前会话实际有 40 个**：多出的 14 个是随会话组合的（`subagent`、`spawn_teammate`、
+   `team_task_*`、`schedule_*`、`cordis_inspect_*`、`plugin_manager`，服务契约原话是
+   *"delegation tools are composed for a Session"*）。
 
-   - `agent/created` 事件的契约是 `(this: Scoped<Agent>, payload: { agent, … })`，
-     `this` 就是该 agent 的作用域对象，而 `ScopeKey` 就是 `object` —— 拿它当 scope 调
-     `tools.schemas(this)` 即可读到该会话真实的工具视图（监听用 `ctx.effect` 管住）；
-   - 还没创建过 agent（刚启动）时，借一个预设作用域租约
-     （`agentPresets.acquireScope()`，官方用途是 cold transcript presentation：拿租约 → 读 → 释放），
-     读完立刻 `AsyncDispose` 释放；
-   - 两者都没有就退回全局视图。
+   > **那 14 个从插件侧读不到**，这条路我试过并撤掉了。源码里 `view(scope)` 是
+   > `this.layers.chainLayers(scope)` —— `scope` 必须是**层注册表登记的键**。插件能拿到的
+   > 只有 `agentPresets.acquireScope()` 给的 generation key；用 `agent/created` 事件里的
+   > `this`（`Scoped<Agent>`）当 scope 试过，注册表不认，直接退回全局视图（1 个）。
+   > Tool inspect provider 之所以能看到 40，是因为它运行在**请求方 agent 的作用域内**。
+   > 所以这一页显示的是"**该预设给 Agent 的组合**"，并在脚注里如实说明会话级工具不在其中。
 
-   界面上**如实标注是哪一种**：`当前会话视图` / `按预设 <id>`。
+   **防退化规则**：两个视图都读，**取工具更多的那个**。作用域解析一旦失配（比如宿主改了
+   scope 的形状），预设视图会退化成全局视图 —— 那时自动回落，页面绝不会反而变少。
+   这条规则是实测踩坑（26 → 1）之后加的，冒烟测试有专门用例。
 
+   界面上**如实标注**：`按预设 <id>`。
    **MCP** 不需要翻配置：`dsh-mcp-client` 把工具注册成 `mcp__<服务器>__<工具>`，
    服务器名直接从工具名反推（只按**第一个** `__` 切 —— 服务器名里出现单个下划线很常见，
    按最后一段切会把名字拆坏）。
