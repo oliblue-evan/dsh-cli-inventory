@@ -1,6 +1,6 @@
 {
   "name": "dsh-cli-inventory",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "DSH 环境与能力：在「设置」里列出这个 Agent 能操作什么 —— 工具注册表、技能、MCP 服务器，以及你自己安装的命令行工具与运行时；只读、容错，系统目录不列出",
   "author": "李敖 (oliblue)",
