@@ -83,12 +83,13 @@ assert.ok(report.pathCount > 0, '应至少有一个 PATH 目录');
 
 const harness = report.entries.filter((entry) => entry.source === 'harness');
 const commands = report.entries.filter((entry) => entry.source === 'path');
-assert.ok(commands.length >= 10, 'PATH 里应扫到足够多的命令，实际 ' + commands.length);
+assert.ok(commands.length >= 3, '应扫到你自己装的命令，实际 ' + commands.length);
+assert.ok(commands.length < 100, '系统目录应被整体跳过，命令数不该上百，实际 ' + commands.length);
 assert.ok(harness.some((entry) => entry.name === 'node'), '应含 harness 自带的 node');
 
 // 版本：白名单里存在的命令应当取到版本
 const withVersion = report.entries.filter((entry) => typeof entry.version === 'string' && entry.version !== '');
-assert.ok(withVersion.length >= 3, '应至少取到 3 个版本，实际 ' + withVersion.length);
+assert.ok(withVersion.length >= 1, '应至少取到 1 个版本，实际 ' + withVersion.length);
 const gh = report.entries.find((entry) => entry.name === 'gh');
 if (gh !== undefined) {
   assert.ok(typeof gh.version === 'string' && gh.version.includes('gh version'), 'gh 版本应被取到：' + gh.version);
@@ -101,15 +102,17 @@ for (const entry of report.entries) {
 }
 assert.ok(!response.body.includes('/Users/liao'), '响应里不得出现绝对家目录');
 
-console.log('✓ 扫描结果：', report.pathCount, '个 PATH 目录 ·', commands.length, '个命令 ·',
-  withVersion.length, '个取到版本 · harness 运行时', harness.length, '个');
-console.log('✓ 前 10 个命令：', commands.slice(0, 10).map((entry) => entry.name).join(', '));
+console.log('✓ 扫描结果：PATH', report.pathCount, '个目录（扫了', report.scannedDirCount, '个）·',
+  commands.length, '个命令 ·', withVersion.length, '个取到版本 · harness 运行时', harness.length, '个');
+console.log('✓ 扫到的命令：', commands.map((entry) => entry.name).join(', '));
 // 5) 分组计数与运行时识别
-assert.ok(report.scopeCounts !== null && typeof report.scopeCounts === 'object', '响应应带 scopeCounts');
-assert.ok(report.scopeCounts.user >= 1, '应至少识别出 1 个"你自己装的"');
-assert.ok(report.scopeCounts.system > 0, '系统段应有条目');
 assert.equal(report.truncated, false, '上限已放宽到实际规模之上，不应再截断');
-console.log('✓ 分组计数：你自己装的', report.scopeCounts.user, '· 系统自带', report.scopeCounts.system, '· 未截断');
+assert.ok(report.scannedDirCount > 0 && report.scannedDirCount < report.pathCount,
+  '应只扫一部分目录（系统目录跳过）：' + report.scannedDirCount + '/' + report.pathCount);
+// 系统目录必须**完全没有**出现在结果里
+const systemish = commands.filter((entry) => /^\/(usr\/bin|usr\/sbin|bin|sbin|System)\//.test(entry.path));
+assert.deepEqual(systemish.map((entry) => entry.path), [], '系统目录的命令不该被列出');
+console.log('✓ 只扫了', report.scannedDirCount, '/', report.pathCount, '个目录 ·', commands.length, '个命令 · 无系统目录条目');
 
 const { existsSync, readdirSync } = await import('node:fs');
 const { homedir } = await import('node:os');
@@ -128,13 +131,10 @@ if (pythonOnDisk) {
   console.log('✓ 运行时识别：node + python3 都找到了（本机存在运行时 python）');
 }
 
-// 5) 缓存：重复请求应复用同一份结果；`?fresh=1` 必须重扫
+// 5) 无缓存：每次请求都应重新扫描（扫描已降到毫秒级）
 const again = JSON.parse((await call({ host: '127.0.0.1:19387' })).body);
-assert.equal(again.scannedAt, report.scannedAt, '未带 fresh 时应复用缓存');
-console.log('✓ 缓存复用：scannedAt 不变');
-const fresh = JSON.parse((await call({ host: '127.0.0.1:19387' }, 'GET', '/api/cli-inventory/list?fresh=1')).body);
-assert.notEqual(fresh.scannedAt, report.scannedAt, 'fresh=1 应绕过缓存重扫');
-console.log('✓ fresh=1 绕过缓存：scannedAt 已更新');
+assert.notEqual(again.scannedAt, report.scannedAt, '没有缓存了：每次请求都应是新扫描');
+console.log('✓ 无缓存：每次请求都是新扫描（scannedAt 变化）');
 
 // 6) 能力段：**容错**（宿主没有 tools/skills 服务时不能崩，只如实报空）
 assert.ok(report.capabilities !== null && typeof report.capabilities === 'object', '响应应带 capabilities');
@@ -170,7 +170,7 @@ console.log('✓ 能力段容错：宿主未提供 tools/skills 服务时如实�
   const caps = await new Promise((resolve, reject) => {
     const res = { statusCode: 0, setHeader() {}, end(body) { resolve(JSON.parse(String(body))); } };
     Promise.resolve(capRoutes[0].handler(
-      { method: 'GET', headers: { host: '127.0.0.1:19387' }, url: '/api/cli-inventory/list?fresh=1' }, res,
+      { method: 'GET', headers: { host: '127.0.0.1:19387' }, url: '/api/cli-inventory/list' }, res,
     )).catch(reject);
   });
   assert.deepEqual(caps.capabilities.tools.map((entry) => entry.name), ['bash', 'read'], '普通工具（脏条目被跳过）');

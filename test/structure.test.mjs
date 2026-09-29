@@ -12,10 +12,7 @@ import { readFileSync } from 'node:fs';
 import { clientSource, pureLogicBlock } from './extract-client.mjs';
 
 /** 测试依赖的纯逻辑符号。 */
-const REQUIRED = [
-  'ROW_LIMIT', 'filterEntries', 'groupEntries', 'sortForDisplay',
-  'resolveScope', 'visibleGroups', 'summarize', 'capRows',
-];
+const REQUIRED = ['ROW_LIMIT', 'filterEntries', 'groupEntries', 'sortForDisplay', 'summarize', 'capRows'];
 
 test('纯逻辑标记各出现一次，且区块内确有测试依赖的符号', () => {
   const source = clientSource();

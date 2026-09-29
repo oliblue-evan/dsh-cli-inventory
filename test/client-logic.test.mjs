@@ -7,8 +7,7 @@ import assert from 'node:assert/strict';
 import { clientScope } from './extract-client.mjs';
 
 const c = clientScope([
-  'ROW_LIMIT', 'SCOPES', 'filterEntries', 'groupEntries', 'sortForDisplay',
-  'resolveScope', 'visibleGroups', 'summarize', 'capRows',
+  'ROW_LIMIT', 'filterEntries', 'groupEntries', 'sortForDisplay', 'summarize', 'capRows',
 ]);
 
 /** 造一份条目。 */
@@ -39,24 +38,18 @@ test('过滤：空关键词原样返回；命中名称/版本/路径任一即可
   assert.deepEqual(c.filterEntries(capabilities, 'github').map((e) => e.name), ['mcp__github__issue'], '按服务器过滤');
 });
 
-test('分组：harness → 运行时段；scope=system → 系统段；其余 → 你自己装的', () => {
+test('分组：harness → 运行时段，其余 → 你自己装的（系统目录宿主根本不扫）', () => {
   const list = [
     entry('node', { source: 'harness' }),
     entry('gh'),
     entry('python3', { source: 'harness' }),
-    entry('git', { scope: 'system' }),
-    entry('uv', { scope: 'user' }),
+    entry('uv'),
   ];
   const groups = c.groupEntries(list);
   assert.deepEqual(groups.runtimes.map((e) => e.name), ['node', 'python3']);
-  assert.deepEqual(groups.user.map((e) => e.name), ['gh', 'uv'], 'scope 非 system 都算你自己装的');
-  assert.deepEqual(groups.system.map((e) => e.name), ['git']);
-  assert.deepEqual(c.groupEntries(null), { runtimes: [], user: [], system: [] });
-  assert.deepEqual(
-    c.groupEntries([null, 'x']),
-    { runtimes: [], user: [], system: [] },
-    '脏项被过滤掉而不是抛错',
-  );
+  assert.deepEqual(groups.user.map((e) => e.name), ['gh', 'uv']);
+  assert.deepEqual(c.groupEntries(null), { runtimes: [], user: [] });
+  assert.deepEqual(c.groupEntries([null, 'x']), { runtimes: [], user: [] }, '脏项被过滤掉而不是抛错');
 });
 
 test('排序：取到版本的排前面，同组内按名称；不改动传入的数组', () => {
@@ -84,26 +77,9 @@ test('排序：取到版本的排前面，同组内按名称；不改动传入�
   );
 });
 
-test('范围：有关键词时一律「全部」，否则用所选范围；非法值回落到「自己装的」', () => {
-  assert.equal(c.resolveScope('user', ''), 'user');
-  assert.equal(c.resolveScope('system', '   '), 'system', '只有空白不算搜索');
-  assert.equal(c.resolveScope('system', 'git'), 'all', '搜索时跨范围找，否则搜 git 会一无所获');
-  assert.equal(c.resolveScope('user', 'git'), 'all');
-  assert.equal(c.resolveScope('bogus', ''), 'user');
-  assert.equal(c.resolveScope(undefined, undefined), 'user');
-  assert.deepEqual(c.SCOPES, ['user', 'system', 'all']);
-});
-
-test('可见段：自己装的 → 运行时+自己装的；系统 → 只有系统；全部 → 三段', () => {
-  assert.deepEqual(c.visibleGroups('user'), ['runtimes', 'user']);
-  assert.deepEqual(c.visibleGroups('system'), ['system']);
-  assert.deepEqual(c.visibleGroups('all'), ['runtimes', 'user', 'system']);
-  assert.deepEqual(c.visibleGroups('bogus'), ['runtimes', 'user'], '未知范围按默认视图处理');
-});
-
 test('摘要：能力计数取 capabilities，命令行计数优先用宿主给的分组计数', () => {
   const report = {
-    pathCount: 12, total: 1270, truncated: false, scopeCounts: { user: 7, system: 1263 },
+    pathCount: 12, scannedDirCount: 3, total: 7, truncated: false,
     capabilities: {
       tools: [{ name: 'read' }, { name: 'bash' }],
       skills: [{ name: 'pdf' }],
@@ -117,15 +93,16 @@ test('摘要：能力计数取 capabilities，命令行计数优先用宿主给�
   };
   assert.deepEqual(c.summarize(report), {
     tools: 2, skills: 1, mcpServers: 1, mcpTools: 1,
-    pathCount: 12, total: 1270, withVersion: 2, user: 7, system: 1263, truncated: false,
+    pathCount: 12, scannedDirCount: 3, total: 7, withVersion: 2, truncated: false,
   });
-  // 宿主没给 scopeCounts / total 时按条目自行统计
+  // total 缺失时按条目自行统计（不含 harness 运行时）
   const fallback = c.summarize({ entries: report.entries });
-  assert.equal(fallback.user, 1);
-  assert.equal(fallback.system, 1);
-  assert.equal(fallback.total, 2, 'total 缺失时按 PATH 段条目数兜底（不含 harness 运行时）');
+  assert.equal(fallback.total, 2);
   assert.equal(fallback.tools, 0, '没有 capabilities 时能力计数为 0');
-  const empty = { tools: 0, skills: 0, mcpServers: 0, mcpTools: 0, pathCount: 0, total: 0, withVersion: 0, user: 0, system: 0, truncated: false };
+  const empty = {
+    tools: 0, skills: 0, mcpServers: 0, mcpTools: 0,
+    pathCount: 0, scannedDirCount: 0, total: 0, withVersion: 0, truncated: false,
+  };
   assert.deepEqual(c.summarize(null), empty);
   assert.deepEqual(c.summarize('nonsense'), empty);
   // capabilities 存在但字段是脏的，也应该报 0 而不是抛错

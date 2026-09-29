@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  PER_DIR_LIMIT, SYSTEM_TOTAL_LIMIT, USER_TOTAL_LIMIT,
+  PER_DIR_LIMIT, USER_TOTAL_LIMIT,
   cap, classifyDir, isCommandEntry, joinDir, mergeByPathOrder, parseVersion, splitPath,
 } from '../lib/path-scan.js';
 
@@ -67,8 +67,8 @@ test('截断：不超限时 truncated 为 false', () => {
   assert.deepEqual(cap([1, 2], 5), { items: [1, 2], truncated: false });
   assert.deepEqual(cap([1, 2, 3], 2), { items: [1, 2], truncated: true });
   assert.deepEqual(cap(null, 2), { items: [], truncated: false });
-  assert.ok(PER_DIR_LIMIT > 0 && SYSTEM_TOTAL_LIMIT > 0 && USER_TOTAL_LIMIT > 0);
-  assert.ok(PER_DIR_LIMIT >= 1000, '保险丝要大于 /usr/bin 的实际规模，否则会截掉 git 这类常用命令');
+  assert.ok(PER_DIR_LIMIT > 0 && USER_TOTAL_LIMIT > 0);
+  assert.ok(USER_TOTAL_LIMIT >= 100, '用户目录里也可能有几百个工具，上限别卡太紧');
 });
 
 test('目录分类：家目录与 /usr/local、/opt 算"你自己装的"，/usr/bin 等算系统自带', () => {

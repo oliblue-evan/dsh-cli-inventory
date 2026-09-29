@@ -27,7 +27,7 @@ import {
   MCP_TOOL_PREFIX, normalizeSkill, normalizeTool, sortByName, summarizeCapabilities,
 } from './lib/capabilities.js';
 import {
-  PER_DIR_LIMIT, SYSTEM_TOTAL_LIMIT, USER_TOTAL_LIMIT,
+  PER_DIR_LIMIT, USER_TOTAL_LIMIT,
   cap, classifyDir, isCommandEntry, joinDir, mergeByPathOrder, parseVersion, splitPath,
 } from './lib/path-scan.js';
 
@@ -144,10 +144,12 @@ async function scanCommands() {
   const home = homedir();
   const dirs = splitPath(process.env.PATH, delimiter);
   const scans = [];
-  const scopes = new Map();
+  let scannedDirs = 0;
   for (const dir of dirs) {
-    const scope = classifyDir(dir, home);
-    scopes.set(dir, scope);
+    // **只扫"你自己装的"目录**：系统目录（/usr/bin、/sbin…）占了实测 1270 条里的 1263 条，
+    // 既没有实用价值，也是那 800ms 的来源。跳过它们之后扫描从 800ms 掉到 ~40ms。
+    if (classifyDir(dir, home) === 'system') continue;
+    scannedDirs += 1;
     let names;
     try {
       names = await readdir(dir);
@@ -169,17 +171,10 @@ async function scanCommands() {
     }
     scans.push({ dir, entries });
   }
-  const merged = mergeByPathOrder(scans)
-    .map((command) => ({ ...command, scope: scopes.get(command.dir) === 'system' ? 'system' : 'user' }));
-  // 分类限流：先保证"你自己装的"全在，再拿剩下的额度放系统工具。
-  const users = cap(merged.filter((command) => command.scope === 'user'), USER_TOTAL_LIMIT);
-  const systems = cap(merged.filter((command) => command.scope === 'system'), SYSTEM_TOTAL_LIMIT);
+  const merged = mergeByPathOrder(scans);
+  const users = cap(merged, USER_TOTAL_LIMIT);
   return {
-    dirs,
-    commands: [...users.items, ...systems.items],
-    total: merged.length,
-    scopeCounts: { user: users.items.length, system: systems.items.length },
-    truncated: users.truncated || systems.truncated,
+    dirs, scannedDirs, commands: users.items, total: merged.length, truncated: users.truncated,
   };
 }
 
@@ -312,7 +307,7 @@ async function scanCapabilities(ctx) {
  * @returns 响应对象。
  */
 async function buildReport(ctx) {
-  const { dirs, commands, truncated, total, scopeCounts } = await scanCommands();
+  const { dirs, scannedDirs, commands, truncated, total } = await scanCommands();
   const [versions, runtimes] = await Promise.all([probeVersions(commands), scanHarnessRuntimes()]);
   const capabilities = await scanCapabilities(ctx);
   const entries = [
@@ -323,7 +318,6 @@ async function buildReport(ctx) {
       name: command.name,
       path: tilde(command.path),
       source: 'path',
-      scope: command.scope,
       version: versions.get(command.name) ?? null,
     })),
   ];
@@ -334,36 +328,17 @@ async function buildReport(ctx) {
     platform: process.platform + '/' + process.arch,
     nodeVersion: process.versions.node,
     pathCount: dirs.length,
+    scannedDirCount: scannedDirs,
     pathDirs: dirs.map(tilde),
     total,
-    scopeCounts,
     truncated,
     entries,
   };
 }
 
-/**
- * 扫描结果的短缓存。
- *
- * 一次全量扫描约 800 ms（1270 次 stat + 十几次白名单探测）。设置在页面上被打开时没必要
- * 每次都重扫，所以同一份结果在 {@link CACHE_TTL_MS} 内直接复用；界面上的「重新扫描」按钮
- * 会带上 `?fresh=1` 绕过缓存，保证按钮按下去一定是最新的。
- */
-const CACHE_TTL_MS = 15000;
-let cache = { at: 0, report: null };
-
-/**
- * 取报告（按需重扫）。
- * @param fresh - 是否强制绕过缓存。
- * @returns 报告对象。
- */
-async function reportFor(fresh, ctx) {
-  const now = Date.now();
-  if (fresh !== true && cache.report !== null && now - cache.at < CACHE_TTL_MS) return cache.report;
-  const report = await buildReport(ctx);
-  cache = { at: Date.now(), report };
-  return report;
-}
+// 【为什么没有缓存】原先扫描要 800ms（1270 次 stat），所以加了 15 秒缓存 + 「重新扫描」
+// 按钮。现在系统目录整个不扫了，剩下的只有个位数条目，一次全量扫描是毫秒级 ——
+// 缓存与刷新按钮都成了多余的机关，去掉更简单，也永远是新的。
 
 /**
  * 宿主入口：注册只读数据路由。
@@ -388,15 +363,7 @@ function apply(ctx) {
         return;
       }
       try {
-        let fresh = false;
-        if (typeof req.url === 'string' && req.url !== '') {
-          try {
-            fresh = new URL(req.url, 'http://127.0.0.1').searchParams.get('fresh') === '1';
-          } catch {
-            fresh = false;
-          }
-        }
-        const report = await reportFor(fresh, ctx);
+        const report = await buildReport(ctx);
         const body = JSON.stringify(report);
         if (body.length > MAX_BODY) throw new Error('report too large');
         res.statusCode = 200;

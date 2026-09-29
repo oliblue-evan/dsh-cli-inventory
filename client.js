@@ -1,17 +1,20 @@
 /**
  * 环境与能力 —— 客户端半边：**「设置」里的一个页面**。
  *
- * 【这一页回答什么问题】不是"这台机器上装了哪些文件"，而是
- * **"这个 Agent 到底能操作什么"**：工具注册表（真正发给模型的那批工具）、
- * 技能注册表、MCP 服务器贡献的工具，然后是命令行工具与运行时。
- * 系统自带的上千项只是兜底信息，默认折叠。
+ * 【这一页回答什么问题】**"这个 Agent 到底能操作什么"**：工具注册表（真正发给模型的
+ * 那批工具）、技能注册表、MCP 服务器贡献的工具，然后是"你自己装的"命令行工具与
+ * DSH 自带运行时。
+ *
+ * 【为什么不列系统目录】`/usr/bin`、`/sbin` 那些加起来上千项，却没有参考价值 ——
+ * 实测 1270 个命令里 1263 个来自系统目录，而真正的 CLI 只有个位数。所以宿主**直接跳过**
+ * 系统目录（扫描因此从 800ms 降到 ~40ms），页面也不会再有"上千行"。
  *
  * 【本文件的组织方式】
  *   客户端 bundle **必须是单文件**：宿主把各插件的 bundle 拼接成一个 combo 脚本、
  *   以**传统脚本**执行（`window.__ModuleLoader__` 处于 queue 模式，只登记工厂函数），
  *   所以这里写 ES 相对 import 并不成立。用「目录 + 显式 region 标记」代替拆文件：
  *
- *     1. 纯逻辑     过滤 / 分组 / 排序 / 范围 / 摘要 / 截断（不含 React/DOM，可被测试抽取）
+ *     1. 纯逻辑     过滤 / 分组 / 排序 / 摘要 / 截断（不含 React/DOM，可被测试抽取）
  *     2. 文案       中英词典
  *     3. 样式       CSS，数值与 token 对齐宿主
  *     4. 组件       设置页本体
@@ -31,7 +34,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useEffect, useMemo, useCallback } = React;
+    const { useState, useEffect, useMemo } = React;
 
     // ========================================================================
     // 1. 纯逻辑（不含 React/DOM）
@@ -41,9 +44,6 @@ window.__ModuleLoader__.load({
 
     /** 每段最多渲染多少行；其余靠搜索缩小范围。 */
     const ROW_LIMIT = 80;
-
-    /** 命令行部分可选的范围（能力段不受它影响）。 */
-    const SCOPES = ['user', 'system', 'all'];
 
     /**
      * 按关键词过滤条目。
@@ -67,17 +67,16 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 分三段：**DSH 自带运行时** / **你自己装的** / **系统自带**。
+     * 分两段：**DSH 自带运行时**（harness 提供）与**你自己装的**（PATH 里扫到的）。
      * @param entries - 条目数组。
-     * @returns `{ runtimes, user, system }`。
+     * @returns `{ runtimes, user }`。
      */
     function groupEntries(entries) {
       const list = Array.isArray(entries) ? entries : [];
       const usable = list.filter((entry) => entry !== null && typeof entry === 'object');
       return {
         runtimes: usable.filter((entry) => entry.source === 'harness'),
-        user: usable.filter((entry) => entry.source !== 'harness' && entry.scope !== 'system'),
-        system: usable.filter((entry) => entry.source !== 'harness' && entry.scope === 'system'),
+        user: usable.filter((entry) => entry.source !== 'harness'),
       };
     }
 
@@ -100,29 +99,6 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 实际生效的范围。**有关键词就按「全部」找**（否则搜系统命令会一无所获）。
-     * @param scope - 用户选的范围。
-     * @param query - 搜索关键词。
-     * @returns `'user' | 'system' | 'all'`。
-     */
-    function resolveScope(scope, query) {
-      const searching = String(query === undefined || query === null ? '' : query).trim() !== '';
-      if (searching) return 'all';
-      return SCOPES.includes(scope) ? scope : 'user';
-    }
-
-    /**
-     * 某个范围内该渲染哪几段**命令行**（能力段始终显示）。
-     * @param scope - 生效范围。
-     * @returns 段名数组。
-     */
-    function visibleGroups(scope) {
-      if (scope === 'system') return ['system'];
-      if (scope === 'all') return ['runtimes', 'user', 'system'];
-      return ['runtimes', 'user'];
-    }
-
-    /**
      * 从宿主报告里取出要显示的数字。
      * @param report - 宿主返回的报告。
      * @returns 计数对象。
@@ -136,22 +112,17 @@ window.__ModuleLoader__.load({
         : {};
       const count = (value) => (Array.isArray(value) ? value.length : 0);
       const mcp = caps.mcp !== null && typeof caps.mcp === 'object' && caps.mcp !== undefined ? caps.mcp : {};
-      const counts = source.scopeCounts !== null && typeof source.scopeCounts === 'object' && source.scopeCounts !== undefined
-        ? source.scopeCounts
-        : {};
-      const countOf = (key, fallback) => (Number(counts[key]) > 0 ? Number(counts[key]) : fallback);
       return {
         tools: count(caps.tools),
         skills: count(caps.skills),
         mcpServers: count(mcp.servers),
         mcpTools: count(mcp.tools),
         pathCount: Number(source.pathCount) || 0,
+        scannedDirCount: Number(source.scannedDirCount) || 0,
         total: Number(source.total) || commands.length,
         withVersion: entries.filter(
           (entry) => entry !== null && typeof entry === 'object' && typeof entry.version === 'string' && entry.version !== '',
         ).length,
-        user: countOf('user', commands.filter((entry) => entry.scope !== 'system').length),
-        system: countOf('system', commands.filter((entry) => entry.scope === 'system').length),
         truncated: source.truncated === true,
       };
     }
@@ -181,24 +152,16 @@ window.__ModuleLoader__.load({
     const ZH = {
       'nav': '环境与能力',
       'title': '环境与能力',
-      'refresh': '重新扫描',
       'loading': '正在读取…',
       'search': '搜索工具、技能、命令…',
-      'searchAll': '搜索时在所有范围内查找',
-      'scopeLabel': '命令行范围',
-      'scope.user': '自己装的',
-      'scope.system': '系统自带',
-      'scope.all': '全部',
       'group.tools': '工具',
       'group.skills': '技能',
       'group.mcp': 'MCP',
       'group.runtimes': 'DSH 自带运行时',
       'group.user': '你自己安装的',
-      'group.system': '系统自带',
       'summaryCaps': '工具 {tools} · 技能 {skills} · MCP 服务器 {mcpServers}',
-      'summary': 'PATH {dirs} 个目录 · 命令 {total} 个 · 取到版本 {withVersion} 个',
-      'breakdown': '你自己装的 {user} · 系统自带 {system}',
-      'summaryTruncated': '（扫描已截断，只列出一部分）',
+      'summary': '扫描了 PATH 中 {scanned}/{dirs} 个目录 · 命令行工具 {total} 个 · 取到版本 {withVersion} 个',
+      'summaryTruncated': '（已截断，只列出一部分）',
       'mcpServers': 'MCP 服务器：{servers}',
       'empty.tools': '读不到工具注册表（宿主未提供 tools 服务）。',
       'empty.skills': '还没有技能。',
@@ -211,30 +174,22 @@ window.__ModuleLoader__.load({
       'hidden': '另有 {count} 项未显示，用上面的搜索缩小范围',
       'noVersion': '未取版本',
       'failed': '读取失败：{reason}',
-      'note': '工具与技能来自宿主注册表（只读，容错：服务不可用就显示 0）；命令行工具只枚举 PATH 目录，且仅对内置白名单执行 `--version` 取版本。',
+      'note': '工具与技能来自宿主注册表（只读且容错：服务不可用就显示 0）。命令行工具只扫「你自己装的」目录 —— 系统目录有上千项、没有参考价值，故不列出；且仅对内置白名单执行 `--version` 取版本。',
     };
 
     const EN = {
       'nav': 'Environment & capabilities',
       'title': 'Environment & capabilities',
-      'refresh': 'Rescan',
       'loading': 'Reading…',
       'search': 'Search tools, skills, commands…',
-      'searchAll': 'Searching across every scope',
-      'scopeLabel': 'Command scope',
-      'scope.user': 'Installed',
-      'scope.system': 'System',
-      'scope.all': 'All',
       'group.tools': 'Tools',
       'group.skills': 'Skills',
       'group.mcp': 'MCP',
       'group.runtimes': 'Bundled DSH runtimes',
       'group.user': 'Installed by you',
-      'group.system': 'System',
       'summaryCaps': '{tools} tools · {skills} skills · {mcpServers} MCP servers',
-      'summary': '{dirs} PATH directories · {total} commands · {withVersion} with a version',
-      'breakdown': '{user} installed by you · {system} system',
-      'summaryTruncated': ' (scan truncated; only part is listed)',
+      'summary': 'Scanned {scanned}/{dirs} PATH directories · {total} commands · {withVersion} with a version',
+      'summaryTruncated': ' (truncated; only part is listed)',
       'mcpServers': 'MCP servers: {servers}',
       'empty.tools': 'The tool registry is unavailable (no `tools` service on this host).',
       'empty.skills': 'No skills yet.',
@@ -247,11 +202,11 @@ window.__ModuleLoader__.load({
       'hidden': '{count} more hidden — narrow it with the search above',
       'noVersion': 'no version',
       'failed': 'Failed to read: {reason}',
-      'note': 'Tools and skills come from the host registries (read-only, fault-tolerant: an unavailable service reads as 0). The command list only enumerates PATH directories, and executes `--version` for a built-in allowlist only.',
+      'note': 'Tools and skills come from the host registries (read-only, fault-tolerant: an unavailable service reads as 0). The command list scans only the directories you installed into — system directories hold a thousand-odd entries and are not listed — and executes `--version` for a built-in allowlist only.',
     };
 
     /**
-     * 段 / 范围的文案 key 映射。
+     * 段的文案 key 映射。
      *
      * 【为什么写成映射】拼字符串（`t('group.' + key)`）会让"词条有没有被引用"这类静态检查
      * 失效 —— 结构测试就因此把这些词条判成未使用过。写成映射后每个 key 都是字面量。
@@ -262,9 +217,7 @@ window.__ModuleLoader__.load({
       mcp: 'group.mcp',
       runtimes: 'group.runtimes',
       user: 'group.user',
-      system: 'group.system',
     };
-    const SCOPE_LABEL = { user: 'scope.user', system: 'scope.system', all: 'scope.all' };
 
     /**
      * 文案函数：优先框架绑定的 t，缺词典时退回本地中文。
@@ -297,21 +250,8 @@ window.__ModuleLoader__.load({
 
     const CSS = `
 .ciPage{display:grid;gap:14px;font-size:calc(var(--dsh-content-font-size-secondary,13px) - 1px);line-height:18px}
-.ciHead{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .ciTitle{color:var(--dsw-alias-label-primary);font-size:14px;font-weight:600;line-height:20px}
-.ciBtn{flex:none;padding:4px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:0 0;
-  color:var(--dsw-alias-label-secondary);font:inherit;cursor:pointer}
-.ciBtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.ciBtn[disabled]{cursor:default;opacity:.5;background:0 0}
 .ciSummary,.ciBreakdown{color:var(--dsw-alias-label-tertiary);font-size:12px;font-variant-numeric:tabular-nums}
-.ciChips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.ciChip{padding:3px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:0 0;
-  color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer;corner-shape:round}
-.ciChip:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.ciChip[aria-selected="true"]{border-color:transparent;background:var(--dsw-alias-brand-primary);
-  color:var(--dsw-alias-label-primary-foreground)}
-.ciChipLabel{color:var(--dsw-alias-label-tertiary);font-size:11px}
-.ciHint{color:var(--dsw-alias-label-tertiary);font-size:11px}
 .ciSearch{box-sizing:border-box;width:100%;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;
   background:0 0;color:var(--dsw-alias-label-primary);font:inherit}
 .ciSearch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
@@ -418,6 +358,10 @@ window.__ModuleLoader__.load({
 
     /**
      * 「环境与能力」设置页。
+     *
+     * 没有刷新按钮：宿主一次扫描约 40ms，且每次打开这一页都会重新取数 ——
+     * 按钮只会多一个需要解释的机关。
+     *
      * @param props - 槽位属性（`t` / `close` 等）。
      * @returns 页面元素。
      */
@@ -425,34 +369,27 @@ window.__ModuleLoader__.load({
       const t = translator(props);
       const [report, setReport] = useState(null);
       const [error, setError] = useState(null);
-      const [busy, setBusy] = useState(false);
       const [query, setQuery] = useState('');
-      const [scope, setScope] = useState('user');
-      // 默认展开：三个能力段 + 运行时 + 「你自己安装的」；
-      // **系统段默认折叠** —— 它是上千项的那一段。
-      const [open, setOpen] = useState({
-        tools: true, skills: true, mcp: true, runtimes: true, user: true, system: false,
-      });
+      // 默认展开：三个能力段 + 运行时 + 「你自己安装的」。
+      const [open, setOpen] = useState({ tools: true, skills: true, mcp: true, runtimes: true, user: true });
 
-      const load = useCallback(async (fresh) => {
-        setBusy(true);
-        setError(null);
-        try {
-          const url = fresh === true ? API + '?fresh=1' : API;
-          const response = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
-          const data = await response.json().catch(() => null);
-          if (data === null || data.ok !== true) {
-            throw new Error((data && data.error) || ('HTTP ' + response.status));
+      useEffect(() => {
+        let cancelled = false;
+        (async () => {
+          try {
+            const response = await fetch(API, { credentials: 'same-origin', headers: { accept: 'application/json' } });
+            const data = await response.json().catch(() => null);
+            if (cancelled) return;
+            if (data === null || data.ok !== true) {
+              throw new Error((data && data.error) || ('HTTP ' + response.status));
+            }
+            setReport(data);
+          } catch (failure) {
+            if (!cancelled) setError(String(failure && failure.message ? failure.message : failure));
           }
-          setReport(data);
-        } catch (failure) {
-          setError(String(failure && failure.message ? failure.message : failure));
-        } finally {
-          setBusy(false);
-        }
+        })();
+        return () => { cancelled = true; };
       }, []);
-
-      useEffect(() => { load(false); }, [load]);
 
       const capabilities = report !== null && report.capabilities !== null && typeof report.capabilities === 'object'
         ? report.capabilities
@@ -469,18 +406,14 @@ window.__ModuleLoader__.load({
       const rows = useMemo(() => ({
         runtimes: sortForDisplay(groups.runtimes),
         user: sortForDisplay(groups.user),
-        system: sortForDisplay(groups.system),
       }), [groups]);
-
-      const effectiveScope = resolveScope(scope, query);
-      const shownCommands = visibleGroups(effectiveScope);
       const stats = summarize(report);
-      // 有关键词时范围会被强制成「全部」，提示一声免得以为筛选失效
-      const searching = effectiveScope !== scope;
+      const nothingMatched = query.trim() !== ''
+        && tools.length + skills.length + mcpTools.length + filteredCommands.length === 0;
 
       const toggle = (key) => setOpen((current) => ({ ...current, [key]: current[key] !== true }));
 
-      /** 渲染一个命令行段。 */
+      /** 渲染一个命令段。 */
       const renderCommandGroup = (key) => {
         const capped = capRows(rows[key]);
         return h(GroupSection, {
@@ -512,21 +445,16 @@ window.__ModuleLoader__.load({
       };
 
       return h('div', { className: 'ciPage' },
-        h('div', { className: 'ciHead' },
-          h('div', { className: 'ciTitle' }, t('title')),
-          h('button', {
-            type: 'button',
-            className: 'ciBtn',
-            disabled: busy,
-            onClick: () => { load(true); },
-          }, busy ? t('loading') : t('refresh'))),
+        h('div', { className: 'ciTitle' }, t('title')),
+        report === null && error === null ? h('div', { className: 'ciNote' }, t('loading')) : null,
+        error === null ? null : h('div', { className: 'ciError' }, t('failed', { reason: error })),
         report === null ? null : h('div', { className: 'ciSummary' },
           t('summaryCaps', { tools: stats.tools, skills: stats.skills, mcpServers: stats.mcpServers })),
         report === null ? null : h('div', { className: 'ciBreakdown' },
-          t('summary', { dirs: stats.pathCount, total: stats.total, withVersion: stats.withVersion })
-            + (stats.truncated ? t('summaryTruncated') : '')
-            + ' · ' + t('breakdown', { user: stats.user, system: stats.system })),
-        error === null ? null : h('div', { className: 'ciError' }, t('failed', { reason: error })),
+          t('summary', {
+            scanned: stats.scannedDirCount, dirs: stats.pathCount,
+            total: stats.total, withVersion: stats.withVersion,
+          }) + (stats.truncated ? t('summaryTruncated') : '')),
         h('input', {
           type: 'search',
           className: 'ciSearch',
@@ -534,30 +462,16 @@ window.__ModuleLoader__.load({
           value: query,
           onChange: (event) => setQuery(event.target.value),
         }),
+        nothingMatched ? h('div', { className: 'ciEmpty' }, t('empty')) : null,
         report === null ? null : h('div', null,
           renderCapabilityGroup('tools', tools, 'empty.tools', null),
           renderCapabilityGroup('skills', skills, 'empty.skills', 'hint.skills'),
           renderCapabilityGroup('mcp', mcpTools, 'empty.mcp', 'hint.mcp'),
           stats.mcpServers === 0 ? null : h('div', { className: 'ciNote' },
             t('mcpServers', { servers: (Array.isArray(mcp.servers) ? mcp.servers : []).join(', ') }))),
-        h('div', { className: 'ciChips' },
-          h('span', { className: 'ciChipLabel' }, t('scopeLabel')),
-          SCOPES.map((key) => h('button', {
-            key,
-            type: 'button',
-            className: 'ciChip',
-            'aria-selected': scope === key,
-            onClick: () => {
-              setScope(key);
-              if (key === 'system') setOpen((current) => ({ ...current, system: true }));
-            },
-          }, t(SCOPE_LABEL[key]))),
-          searching ? h('span', { className: 'ciHint' }, t('searchAll')) : null),
         report === null ? null : h('div', null,
-          filteredCommands.length === 0 && tools.length + skills.length + mcpTools.length === 0
-            ? h('div', { className: 'ciEmpty' }, t('empty'))
-            : null,
-          shownCommands.map((key) => (rows[key].length === 0 ? null : renderCommandGroup(key)))),
+          rows.runtimes.length === 0 ? null : renderCommandGroup('runtimes'),
+          rows.user.length === 0 ? null : renderCommandGroup('user')),
         h('div', { className: 'ciNote' }, t('note')));
     }
 

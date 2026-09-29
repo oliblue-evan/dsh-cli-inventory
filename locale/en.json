@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Environment & capabilities",
-    "description": "A page inside Settings showing what this agent can actually operate: the tool registry, skills, MCP servers and their tools, then the machine side (CLIs on PATH, bundled runtimes). Read-only and fault-tolerant; the command list only enumerates PATH and executes a built-in allowlist to read versions."
+    "description": "A page inside Settings showing what this agent can actually operate: the tool registry, skills, MCP servers and their tools, plus the CLIs you installed and the bundled DSH runtimes. Read-only and fault-tolerant; the command list scans only the directories you installed into (system directories hold a thousand-odd entries and are skipped) and executes a built-in allowlist to read versions."
   }
 }
