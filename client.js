@@ -150,7 +150,15 @@ window.__ModuleLoader__.load({
     /**
      * 展开时显示的键值对（照官方 CardFacts 的形状：`[label, value]`）。
      *
-     * 折叠时描述被截成两行，展开正好用来看**完整**描述 —— 这就是这张卡"能点开"的价值。
+     * 【不要重复卡片上已有的东西】官方那条 CSS 是
+     * `.card[data-open='true'] .cardDescription { display: block }` —— **展开时描述会取消
+     * 两行截断**，完整说明已经在卡体里了。所以这里**绝不能**再放 description；
+     * 同理命令卡的 `version`（它就是卡片的描述行）也不能再列一次。
+     * 早先两处都放进来了，结果同一段话在展开后出现两遍（用户一眼就看到了）。
+     *
+     * 详情只承载"卡片上看不到的"：技能提供者/何时使用、MCP 服务器/原始工具名。
+     * 标识（路径、名字）则由 Card 的 identity → `entryValue` 呈现 —— 那里的意义是
+     * **芯片会截断、展开行不截断**，与官方"chip 安静 / 展开行醒目"的分工一致。
      *
      * @param entry - 条目。
      * @param t - 文案函数。
@@ -166,9 +174,6 @@ window.__ModuleLoader__.load({
       if (typeof entry.tool === 'string' && entry.tool !== '') push(t('fact.rawName'), entry.tool);
       if (typeof entry.provider === 'string' && entry.provider !== '') push(t('fact.provider'), entry.provider);
       if (typeof entry.whenToUse === 'string' && entry.whenToUse !== '') push(t('fact.whenToUse'), entry.whenToUse);
-      if (typeof entry.version === 'string' && entry.version !== '') push(t('fact.version'), entry.version);
-      if (typeof entry.path === 'string' && entry.path !== '') push(t('fact.path'), entry.path);
-      if (typeof entry.description === 'string' && entry.description !== '') push(t('fact.description'), entry.description);
       return rows;
     }
 
@@ -207,9 +212,6 @@ window.__ModuleLoader__.load({
       'fact.rawName': '原始工具名',
       'fact.provider': '提供者',
       'fact.whenToUse': '何时使用',
-      'fact.version': '版本',
-      'fact.path': '路径',
-      'fact.description': '说明',
       'empty.tools': '读不到工具注册表（宿主未提供 tools 服务）。',
       'empty.skills': '还没有技能。把技能放到 ~/.dsh/skills/<名字>/SKILL.md 就会出现。',
       'empty.mcp': '还没有配置 MCP 服务器；配置后它们贡献的工具会出现在这里。',
@@ -247,9 +249,6 @@ window.__ModuleLoader__.load({
       'fact.rawName': 'raw tool name',
       'fact.provider': 'provider',
       'fact.whenToUse': 'when to use',
-      'fact.version': 'version',
-      'fact.path': 'path',
-      'fact.description': 'description',
       'empty.tools': 'The tool registry is unavailable (no `tools` service on this host).',
       'empty.skills': 'No skills yet. Drop one at ~/.dsh/skills/<name>/SKILL.md and it shows up here.',
       'empty.mcp': 'No MCP server configured yet; the tools it contributes will appear here.',
@@ -423,12 +422,15 @@ window.__ModuleLoader__.load({
       const hasDescription = typeof description === 'string' && description !== '';
       const hasIdentity = typeof identity === 'string' && identity !== '';
       const rows = Array.isArray(facts) ? facts : [];
+      // 有东西可展开才给 button 挂 aria-controls、才渲染详情区 ——
+      // 否则会出现"指向不存在元素"的无障碍引用，以及一条空白的详情条。
+      const hasReveal = hasIdentity || rows.length > 0;
       return h('li', { className: 'ciCard', 'data-open': open ? 'true' : undefined },
         h('button', {
           type: 'button',
           className: 'ciCardContent',
           'aria-expanded': open,
-          'aria-controls': detailId,
+          'aria-controls': hasReveal ? detailId : undefined,
           'aria-label': title + ' — ' + t(open ? 'collapse' : 'expand'),
           onClick: onToggle,
         },
@@ -441,7 +443,7 @@ window.__ModuleLoader__.load({
           }, description) : null,
           hasIdentity ? h('span', { className: 'ciCardMeta' },
             h('code', { className: 'ciCardIdentity', title: identity }, identity)) : null),
-        open ? h('div', { className: 'ciCardDetails', id: detailId },
+        open && hasReveal ? h('div', { className: 'ciCardDetails', id: detailId },
           hasIdentity ? h('code', { className: 'ciEntryValue' }, identity) : null,
           rows.length === 0 ? null : h('dl', { className: 'ciDetails' },
             rows.map(([label, value]) => h('div', { key: label + value },

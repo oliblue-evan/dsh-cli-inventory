@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { clientScope } from './extract-client.mjs';
 
 const c = clientScope([
-  'ROW_LIMIT', 'filterEntries', 'groupEntries', 'sortForDisplay', 'summarize', 'capRows',
+  'ROW_LIMIT', 'filterEntries', 'groupEntries', 'sortForDisplay', 'summarize', 'capRows', 'factsFor',
 ]);
 
 /** 造一份条目。 */
@@ -118,4 +118,31 @@ test('截断：默认上限生效，hidden 计数正确', () => {
   assert.deepEqual(c.capRows([entry('a')], 5), { rows: [entry('a')], hidden: 0 });
   assert.equal(c.capRows(list, 0).rows.length, c.ROW_LIMIT, '非法上限回落到默认值');
   assert.deepEqual(c.capRows(null), { rows: [], hidden: 0 });
+});
+
+test('展开的详情不得重复卡片上已有的内容（说明 / 版本），只给卡片上看不到的事实', () => {
+  // 官方 CSS 是 `.card[data-open='true'] .cardDescription{display:block}` —— 展开时
+  // 描述会**取消两行截断**，完整说明已经在卡体里了。所以详情里再放一次说明就是
+  // 同一段话出现两遍（这条是用户直接看到并指出来的）。
+  const identity = (key) => key;
+  const entry = {
+    name: 'office-docx',
+    description: 'Create, read, edit, and check Word documents…',
+    version: 'office-docx 1.2.3',
+    path: '/usr/local/bin/office-docx',
+    provider: 'dsh-office',
+    whenToUse: '当用户要求处理 Word 文档',
+    server: 'github',
+    tool: 'create_issue',
+  };
+  const rows = c.factsFor(entry, identity);
+  const labels = rows.map(([label]) => label);
+  const values = rows.map(([, value]) => value);
+  assert.deepEqual(labels, ['fact.server', 'fact.rawName', 'fact.provider', 'fact.whenToUse']);
+  assert.ok(!values.includes(entry.description), '详情里不得再出现说明');
+  assert.ok(!values.includes(entry.version), '详情里不得再出现版本（它就是卡片的描述行）');
+  assert.ok(!values.includes(entry.path), '路径由 identity → entryValue 呈现，不走 fact');
+  // 脏值 / 空值不产生行
+  assert.deepEqual(c.factsFor({ name: 'x' }, identity), []);
+  assert.deepEqual(c.factsFor({ name: 'x', server: '', tool: 42, provider: null, whenToUse: '' }, identity), []);
 });
