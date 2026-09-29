@@ -5,9 +5,15 @@
  * 那批工具）、技能注册表、MCP 服务器贡献的工具，然后是"你自己装的"命令行工具与
  * DSH 自带运行时。
  *
- * 【为什么不列系统目录】`/usr/bin`、`/sbin` 那些加起来上千项，却没有参考价值 ——
- * 实测 1270 个命令里 1263 个来自系统目录，而真正的 CLI 只有个位数。所以宿主**直接跳过**
- * 系统目录（扫描因此从 800ms 降到 ~40ms），页面也不会再有"上千行"。
+ * 【版式对齐官方「内置插件」页】整套行/卡片体系照 `dsh-client-ui-settings-plugin-inventory`
+ * 抄：`max-width:760px` 的 section、带放大镜的搜索框、组标题（可折叠 + chevron）与
+ * `·` 分隔的副行、两列卡片网格（窄容器回落单列）、等宽「身份标签」放路径。
+ * 用的是**设置页专用 token**（`--dsw-alias-settings-card-stroke/-fill`、
+ * `--dsw-alias-bg-module-platform`、`--dsw-radius-*`），所以它在设置里看起来是原生的。
+ *
+ * 【一处值得记下的巧合】官方注入样式的方式是「按 `data-plugin-css` 键 querySelector，
+ * 已存在就复用、**从不移除**」—— 与我修完「组件还在、样式没了」那个 bug 后改成的写法
+ * 完全一致，算是事后拿到了官方背书。
  *
  * 【本文件的组织方式】
  *   客户端 bundle **必须是单文件**：宿主把各插件的 bundle 拼接成一个 combo 脚本、
@@ -16,15 +22,14 @@
  *
  *     1. 纯逻辑     过滤 / 分组 / 排序 / 摘要 / 截断（不含 React/DOM，可被测试抽取）
  *     2. 文案       中英词典
- *     3. 样式       CSS，数值与 token 对齐宿主
+ *     3. 样式       CSS，照官方内置插件页
  *     4. 组件       设置页本体
  *     5. apply      注册到 settings.section
  *
  *   第 1 节包在 `#region 纯逻辑` 里，`test/extract-client.mjs` 按标记抽取后直接单测。
  *
  * 【三条纪律】（都是踩过的坑）
- *   · 样式在 `apply` 里幂等注入、不随 dispose 移除 —— 否则出现孤儿注册时页面会变成
- *     「组件还在、样式没了」。
+ *   · 样式幂等注入、不随 dispose 移除 —— 否则出现孤儿注册时页面会变成「组件还在、样式没了」。
  *   · `slots.inject` 返回 dispose 函数，**必须**用 `ctx.effect` 包住，否则注册会泄漏。
  *   · 内联 SVG 必须写死宽高：只有 viewBox 的 SVG 在没有 CSS 时会撑满容器。
  */
@@ -42,7 +47,7 @@ window.__ModuleLoader__.load({
 
     // #region 纯逻辑
 
-    /** 每段最多渲染多少行；其余靠搜索缩小范围。 */
+    /** 每段最多渲染多少张卡片；其余靠搜索缩小范围。 */
     const ROW_LIMIT = 80;
 
     /**
@@ -151,56 +156,58 @@ window.__ModuleLoader__.load({
 
     const ZH = {
       'nav': '环境与能力',
-      'title': '环境与能力',
-      'loading': '正在读取…',
       'search': '搜索工具、技能、命令…',
+      'loading': '正在读取…',
       'group.tools': '工具',
       'group.skills': '技能',
       'group.mcp': 'MCP',
       'group.runtimes': 'DSH 自带运行时',
       'group.user': '你自己安装的',
-      'summaryCaps': '工具 {tools} · 技能 {skills} · MCP 服务器 {mcpServers}',
-      'summary': '扫描了 PATH 中 {scanned}/{dirs} 个目录 · 命令行工具 {total} 个 · 取到版本 {withVersion} 个',
-      'summaryTruncated': '（已截断，只列出一部分）',
-      'mcpServers': 'MCP 服务器：{servers}',
+      'sub.tools': '来自宿主工具注册表',
+      'sub.skills': '来自 ~/.dsh/skills 与技能提供者',
+      'sub.mcp': '服务器：{servers}',
+      'sub.mcpNone': '未配置服务器',
+      'sub.runtimes': '由 harness 自带',
+      'sub.user': '扫了 PATH 中 {scanned}/{dirs} 个目录',
+      'sub.versions': '取到版本 {withVersion} 个',
+      'sub.truncated': '已截断，只列出一部分',
       'empty.tools': '读不到工具注册表（宿主未提供 tools 服务）。',
-      'empty.skills': '还没有技能。',
-      'empty.mcp': '还没有配置 MCP 服务器。',
-      'hint.skills': '把技能放到 ~/.dsh/skills/<名字>/SKILL.md 就会出现；装了技能包插件也会汇总到这里。',
-      'hint.mcp': '配置 MCP 服务器后，它们贡献的工具会出现在这里（命名形如 mcp__<服务器>__<工具>）。',
+      'empty.skills': '还没有技能。把技能放到 ~/.dsh/skills/<名字>/SKILL.md 就会出现。',
+      'empty.mcp': '还没有配置 MCP 服务器；配置后它们贡献的工具会出现在这里。',
       'empty': '没有匹配项',
       'expand': '展开',
       'collapse': '收起',
-      'hidden': '另有 {count} 项未显示，用上面的搜索缩小范围',
       'noVersion': '未取版本',
+      'hidden': '另有 {count} 项未显示，用上面的搜索缩小范围',
       'failed': '读取失败：{reason}',
       'note': '工具与技能来自宿主注册表（只读且容错：服务不可用就显示 0）。命令行工具只扫「你自己装的」目录 —— 系统目录有上千项、没有参考价值，故不列出；且仅对内置白名单执行 `--version` 取版本。',
     };
 
     const EN = {
       'nav': 'Environment & capabilities',
-      'title': 'Environment & capabilities',
-      'loading': 'Reading…',
       'search': 'Search tools, skills, commands…',
+      'loading': 'Reading…',
       'group.tools': 'Tools',
       'group.skills': 'Skills',
       'group.mcp': 'MCP',
       'group.runtimes': 'Bundled DSH runtimes',
       'group.user': 'Installed by you',
-      'summaryCaps': '{tools} tools · {skills} skills · {mcpServers} MCP servers',
-      'summary': 'Scanned {scanned}/{dirs} PATH directories · {total} commands · {withVersion} with a version',
-      'summaryTruncated': ' (truncated; only part is listed)',
-      'mcpServers': 'MCP servers: {servers}',
+      'sub.tools': 'from the host tool registry',
+      'sub.skills': 'from ~/.dsh/skills and skill providers',
+      'sub.mcp': 'servers: {servers}',
+      'sub.mcpNone': 'no server configured',
+      'sub.runtimes': 'shipped by the harness',
+      'sub.user': 'scanned {scanned}/{dirs} PATH directories',
+      'sub.versions': '{withVersion} with a version',
+      'sub.truncated': 'truncated; only part is listed',
       'empty.tools': 'The tool registry is unavailable (no `tools` service on this host).',
-      'empty.skills': 'No skills yet.',
-      'empty.mcp': 'No MCP server configured yet.',
-      'hint.skills': 'Drop one at ~/.dsh/skills/<name>/SKILL.md, or install a skills package — both surface here.',
-      'hint.mcp': 'Once a server is configured, the tools it contributes appear here (named mcp__<server>__<tool>).',
+      'empty.skills': 'No skills yet. Drop one at ~/.dsh/skills/<name>/SKILL.md and it shows up here.',
+      'empty.mcp': 'No MCP server configured yet; the tools it contributes will appear here.',
       'empty': 'Nothing matches',
       'expand': 'Expand',
       'collapse': 'Collapse',
-      'hidden': '{count} more hidden — narrow it with the search above',
       'noVersion': 'no version',
+      'hidden': '{count} more hidden — narrow it with the search above',
       'failed': 'Failed to read: {reason}',
       'note': 'Tools and skills come from the host registries (read-only, fault-tolerant: an unavailable service reads as 0). The command list scans only the directories you installed into — system directories hold a thousand-odd entries and are not listed — and executes `--version` for a built-in allowlist only.',
     };
@@ -245,38 +252,60 @@ window.__ModuleLoader__.load({
     }
 
     // ========================================================================
-    // 3. 样式
+    // 3. 样式（照 dsh-client-ui-settings-plugin-inventory 的体系）
     // ========================================================================
 
     const CSS = `
-.ciPage{display:grid;gap:14px;font-size:calc(var(--dsh-content-font-size-secondary,13px) - 1px);line-height:18px}
-.ciTitle{color:var(--dsw-alias-label-primary);font-size:14px;font-weight:600;line-height:20px}
-.ciSummary,.ciBreakdown{color:var(--dsw-alias-label-tertiary);font-size:12px;font-variant-numeric:tabular-nums}
-.ciSearch{box-sizing:border-box;width:100%;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;
-  background:0 0;color:var(--dsw-alias-label-primary);font:inherit}
-.ciSearch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
-.ciGroup{display:grid;gap:0}
-.ciGroupHead{display:flex;align-items:baseline;gap:8px;width:100%;padding:6px 0;border:0;background:0 0;
-  color:var(--dsw-alias-label-primary);font:inherit;font-weight:500;text-align:left;cursor:pointer}
-.ciGroupHead:hover .ciGroupTitle{color:var(--dsw-alias-brand-primary)}
-.ciGroupHead[aria-expanded="false"] .ciChevron{transform:rotate(-90deg)}
-.ciChevron{flex:none;align-self:center;width:12px;height:12px;transition:transform .12s ease}
-.ciCount{color:var(--dsw-alias-label-tertiary);font-weight:400;font-size:11px;font-variant-numeric:tabular-nums}
-.ciMeta{color:var(--dsw-alias-label-tertiary);font-size:11px}
-.ciRows{display:grid;gap:0}
-.ciRow{display:grid;grid-template-columns:minmax(70px,auto) minmax(110px,1fr) minmax(0,1.5fr);gap:12px;
-  align-items:baseline;padding:7px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
-.ciCapRow{display:grid;grid-template-columns:minmax(110px,auto) minmax(0,1fr);gap:12px;
-  align-items:baseline;padding:7px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
-.ciRow:last-child,.ciCapRow:last-child{border-bottom:0}
-.ciName{color:var(--dsw-alias-label-primary);font-weight:500}
-.ciDesc{color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ciVer{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ciVer[data-missing='true']{color:var(--dsw-alias-label-tertiary)}
-.ciPath{color:var(--dsw-alias-label-tertiary);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ciPath,.ciVer{font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,monospace)}
-.ciEmpty,.ciNote{color:var(--dsw-alias-label-tertiary);font-size:12px}
-.ciError{color:var(--dsw-alias-state-error-primary);font-size:12px}
+.ciSection{box-sizing:border-box;width:100%;max-width:760px;color:var(--dsw-alias-label-primary);
+  flex-direction:column;gap:14px;display:flex;container:ci-inventory/inline-size}
+.ciSearch{position:relative;width:100%;color:var(--dsw-alias-label-tertiary);align-items:center;display:flex}
+.ciSearch>svg{pointer-events:none;position:absolute;left:12px}
+.ciSearch input{box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);
+  background:var(--dsw-alias-bg-layer-1);width:100%;height:36px;color:var(--dsw-alias-label-primary);
+  font:inherit;font-size:13px;outline:none;padding:0 34px 0 36px}
+.ciSearch input::placeholder{color:var(--dsw-alias-label-tertiary)}
+.ciSearch input:focus-visible{border-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));
+  box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)) 18%, transparent)}
+.ciGroup{flex-direction:column;gap:10px;display:flex}
+.ciGroup+.ciGroup{border-top:.5px solid var(--dsw-alias-border-l2);padding-top:14px}
+.ciGroupTitleRow{align-items:center;gap:8px;min-height:36px;display:flex}
+.ciGroupToggle{color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:0;flex:none;
+  align-items:center;gap:8px;padding:0;display:flex}
+.ciGroupToggle:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.ciGroupToggle>.ciChevron{transform:rotate(-90deg)}
+.ciGroupToggle[aria-expanded=true]>.ciChevron{transform:none}
+.ciGroupTitle{color:var(--dsw-alias-label-primary);font-size:14px;font-weight:400;line-height:22px}
+.ciCount{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;font-size:12px;line-height:18px}
+.ciGroupSub{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;flex-wrap:wrap;row-gap:4px;
+  margin:-6px 0 0 20px;font-size:12px;line-height:18px;display:flex}
+.ciGroupSub>*+*:before{content:"·";color:var(--dsw-alias-label-tertiary);padding:0 6px}
+.ciGroupBody{flex-direction:column;gap:10px;display:flex}
+.ciCards{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none;display:grid}
+.ciCard{border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);
+  background:var(--dsw-alias-settings-card-fill);flex-direction:column;min-width:0;display:flex;overflow:hidden}
+.ciCardContent{box-sizing:border-box;width:100%;min-height:52px;color:inherit;font:inherit;text-align:left;
+  background:0 0;border:0;flex-direction:column;flex:auto;align-items:stretch;gap:2px;padding:12px 14px;display:flex}
+.ciCardMainRow{justify-content:space-between;align-items:center;gap:12px;min-width:0;display:flex}
+.ciCardTitle,.ciCardIdentity{text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
+.ciCardTitle{flex:1;min-width:0;font-size:14px;font-weight:500;line-height:20px}
+.ciCardDescription{color:var(--dsw-alias-label-tertiary);text-wrap:pretty;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  font-size:12px;line-height:18px;display:-webkit-box;overflow:hidden}
+.ciCardDescription[data-missing=true]{color:var(--dsw-alias-label-tertiary);font-style:normal;opacity:.85}
+.ciCardMeta{margin-top:auto;padding-top:6px;display:flex}
+.ciCardIdentity{box-sizing:border-box;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);
+  max-width:100%;color:var(--dsw-alias-label-secondary);padding:1px 6px;display:block;
+  font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;line-height:18px}
+.ciChevron{color:var(--dsw-alias-label-tertiary);flex:none;align-self:center;width:12px;height:12px}
+.ciSkeletonCard{border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);
+  background:var(--dsw-alias-settings-card-fill);flex-direction:column;gap:8px;padding:15px 14px;display:flex}
+.ciSkeletonBar{border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-skeleton);width:40%;height:14px}
+.ciSkeletonBar+.ciSkeletonBar{width:80%;height:12px}
+.ciEmpty,.ciNote{color:var(--dsw-alias-label-tertiary);margin:0;font-size:12px;line-height:18px}
+.ciError{color:var(--dsw-alias-state-error-primary);margin:0;font-size:13px;line-height:20px}
+@media (prefers-reduced-motion:no-preference){.ciChevron{transition:transform .14s ease}
+.ciSkeletonBar{animation:2s cubic-bezier(.36,0,.64,1) infinite ci-inventory-skeleton}}
+@keyframes ci-inventory-skeleton{0%{opacity:1}40%{opacity:.6}80%,to{opacity:1}}
+@container ci-inventory (width<=520px){.ciCards{grid-template-columns:minmax(0,1fr)}}
 `;
 
     // ========================================================================
@@ -288,72 +317,89 @@ window.__ModuleLoader__.load({
     const EMPTY_MCP = { servers: [], tools: [] };
 
     /**
-     * 折叠指示三角。
-     * @param props.open - 是否展开。
+     * 折叠指示三角（12px，颜色随父级）。
+     * @param props - 未使用（保持与官方同构的签名）。
      * @returns 内联 SVG（宽高写死：无 CSS 时才不会撑满容器）。
      */
-    function ChevronIcon({ open }) {
+    function ChevronIcon(props) {
+      void props;
       return h('svg', {
         viewBox: '0 0 12 12', width: 12, height: 12, 'aria-hidden': true, fill: 'none', stroke: 'currentColor',
         strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'ciChevron',
-      }, h('path', { d: open ? 'M2.5 4.5 6 8l3.5-3.5' : 'M4.5 2.5 8 6l-3.5 3.5' }));
+      }, h('path', { d: 'M2.5 4.5 6 8l3.5-3.5' }));
     }
 
     /**
-     * 一行命令（名称 / 版本 / 路径）。
-     * @param props.entry - 命令条目。
-     * @param props.t - 文案函数。
-     * @returns 行元素。
+     * 搜索框里的放大镜。
+     * @returns 内联 SVG。
      */
-    function CommandRow({ entry, t }) {
-      const hasVersion = typeof entry.version === 'string' && entry.version !== '';
-      return h('div', { className: 'ciRow' },
-        h('span', { className: 'ciName' }, entry.name),
-        h('span', {
-          className: 'ciVer',
-          'data-missing': hasVersion ? 'false' : 'true',
-          title: hasVersion ? entry.version : undefined,
-        }, hasVersion ? entry.version : t('noVersion')),
-        h('span', { className: 'ciPath', title: entry.path }, entry.path));
+    function SearchIcon() {
+      return h('svg', {
+        viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': true, fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round',
+      },
+      h('circle', { cx: 7, cy: 7, r: 4.5 }),
+      h('path', { d: 'M10.5 10.5 14 14' }));
     }
 
     /**
-     * 一行能力（工具 / 技能 / MCP 工具：名称 + 说明，说明前可带来源）。
-     * @param props.entry - 能力条目。
-     * @returns 行元素。
+     * 一张卡片：标题 + 描述 + 可选等宽身份标签。
+     * @param props.title - 主标题（工具名 / 命令名）。
+     * @param props.description - 描述（工具说明 / 版本行）。
+     * @param props.descriptionMissing - 描述是否表示"没有版本"（用弱化样式）。
+     * @param props.identity - 等宽标签（路径 / 来源）。
+     * @returns 卡片元素。
      */
-    function CapabilityRow({ entry }) {
-      const description = typeof entry.description === 'string' && entry.description !== ''
-        ? entry.description
-        : (typeof entry.whenToUse === 'string' ? entry.whenToUse : '');
-      const meta = typeof entry.server === 'string' && entry.server !== ''
-        ? entry.server
-        : (typeof entry.provider === 'string' ? entry.provider : '');
-      return h('div', { className: 'ciCapRow' },
-        h('span', { className: 'ciName', title: entry.name }, entry.name),
-        h('span', { className: 'ciDesc', title: description || undefined },
-          meta === '' ? null : h('span', { className: 'ciMeta' }, meta + ' · '),
-          description));
+    function Card({ title, description, descriptionMissing, identity }) {
+      const hasIdentity = typeof identity === 'string' && identity !== '';
+      return h('li', { className: 'ciCard' },
+        h('div', { className: 'ciCardContent' },
+          h('div', { className: 'ciCardMainRow' },
+            h('span', { className: 'ciCardTitle', title }, title)),
+          description === '' || description === undefined ? null : h('div', {
+            className: 'ciCardDescription',
+            'data-missing': descriptionMissing === true ? 'true' : 'false',
+            title: description,
+          }, description),
+          hasIdentity ? h('div', { className: 'ciCardMeta' },
+            h('span', { className: 'ciCardIdentity', title: identity }, identity)) : null));
     }
 
     /**
-     * 一段（可折叠：点标题栏展开/收起）。
-     * @param props - `{ title, count, children, open, onToggle, t }`。
-     * @returns 段元素。
+     * 加载骨架（照官方的 skeletonCard）。
+     * @param label - 无障碍标签（「正在读取…」）。
+     * @returns 三张占位卡。
      */
-    function GroupSection({ title, count, children, open, onToggle, t }) {
-      return h('div', { className: 'ciGroup' },
-        h('button', {
-          type: 'button',
-          className: 'ciGroupHead',
-          'aria-expanded': open,
-          title: open ? t('collapse') : t('expand'),
-          onClick: onToggle,
-        },
-          h(ChevronIcon, { open }),
-          h('span', { className: 'ciGroupTitle' }, title),
+    function Skeleton(label) {
+      return h('div', { className: 'ciGroup', role: 'status', 'aria-label': label },
+        h('ul', { className: 'ciCards' },
+          [0, 1, 2].map((index) => h('li', { key: index, className: 'ciSkeletonCard' },
+            h('div', { className: 'ciSkeletonBar' }),
+            h('div', { className: 'ciSkeletonBar' })))));
+    }
+
+    /**
+     * 一组（可折叠）。组标题行 = chevron + 标题；副行用 `·` 分隔若干事实。
+     * @param props - `{ title, count, facts, children, open, onToggle, t }`。
+     * @returns 组元素。
+     */
+    function Group({ title, count, facts, children, open, onToggle, t }) {
+      const items = Array.isArray(facts) ? facts.filter((item) => typeof item === 'string' && item !== '') : [];
+      return h('section', { className: 'ciGroup' },
+        h('div', { className: 'ciGroupTitleRow' },
+          h('button', {
+            type: 'button',
+            className: 'ciGroupToggle',
+            'aria-expanded': open,
+            title: open ? t('collapse') : t('expand'),
+            onClick: onToggle,
+          },
+            h(ChevronIcon, {}),
+            h('span', { className: 'ciGroupTitle' }, title)),
           h('span', { className: 'ciCount' }, String(count))),
-        open ? h('div', { className: 'ciRows' }, children) : null);
+        items.length === 0 ? null : h('div', { className: 'ciGroupSub' },
+          items.map((item) => h('span', { key: item }, item))),
+        open ? h('div', { className: 'ciGroupBody' }, children) : null);
     }
 
     /**
@@ -370,7 +416,6 @@ window.__ModuleLoader__.load({
       const [report, setReport] = useState(null);
       const [error, setError] = useState(null);
       const [query, setQuery] = useState('');
-      // 默认展开：三个能力段 + 运行时 + 「你自己安装的」。
       const [open, setOpen] = useState({ tools: true, skills: true, mcp: true, runtimes: true, user: true });
 
       useEffect(() => {
@@ -413,66 +458,81 @@ window.__ModuleLoader__.load({
 
       const toggle = (key) => setOpen((current) => ({ ...current, [key]: current[key] !== true }));
 
-      /** 渲染一个命令段。 */
-      const renderCommandGroup = (key) => {
-        const capped = capRows(rows[key]);
-        return h(GroupSection, {
+      /** 渲染一组卡片（空则显示一句说明）。 */
+      const renderCards = (key, list, cards, emptyKey) => {
+        const capped = capRows(cards);
+        return h(Group, {
           key,
           title: t(GROUP_LABEL[key]),
-          count: rows[key].length,
+          count: list.length,
+          facts: factsOf(key),
           open: open[key] === true,
           onToggle: () => toggle(key),
           t,
         },
-          capped.rows.map((entry) => h(CommandRow, { key: entry.name + entry.path, entry, t })),
-          capped.hidden === 0 ? null : h('div', { key: 'hidden', className: 'ciNote' }, t('hidden', { count: capped.hidden })));
+          list.length === 0 ? h('p', { className: 'ciEmpty' }, t(emptyKey)) : null,
+          list.length === 0 ? null : h('ul', { className: 'ciCards' }, capped.rows),
+          capped.hidden === 0 ? null : h('p', { className: 'ciNote' }, t('hidden', { count: capped.hidden })));
       };
 
-      /** 渲染一个能力段（空的时候给出"怎么才会有"的提示）。 */
-      const renderCapabilityGroup = (key, list, emptyKey, hintKey) => {
-        const capped = capRows(list);
-        return h(GroupSection, {
-          key,
-          title: t(GROUP_LABEL[key]),
-          count: list.length,
-          open: open[key] === true,
-          onToggle: () => toggle(key),
-          t,
-        }, list.length === 0
-          ? [h('div', { key: 'empty', className: 'ciEmpty' }, t(emptyKey)),
-            hintKey === null ? null : h('div', { key: 'hint', className: 'ciNote' }, t(hintKey))]
-          : capped.rows.map((entry) => h(CapabilityRow, { key: entry.name, entry })));
+      /** 每一组的副行事实（照官方 groupSub 的用法：几条短事实用 `·` 连起来）。 */
+      const factsOf = (key) => {
+        if (key === 'tools') return [t('sub.tools')];
+        if (key === 'skills') return [t('sub.skills')];
+        if (key === 'mcp') {
+          const servers = Array.isArray(mcp.servers) ? mcp.servers : [];
+          return [servers.length === 0 ? t('sub.mcpNone') : t('sub.mcp', { servers: servers.join(', ') })];
+        }
+        if (key === 'runtimes') return [t('sub.runtimes')];
+        const facts = [t('sub.user', { scanned: stats.scannedDirCount, dirs: stats.pathCount })];
+        if (stats.withVersion > 0) facts.push(t('sub.versions', { withVersion: stats.withVersion }));
+        if (stats.truncated) facts.push(t('sub.truncated'));
+        return facts;
       };
 
-      return h('div', { className: 'ciPage' },
-        h('div', { className: 'ciTitle' }, t('title')),
-        report === null && error === null ? h('div', { className: 'ciNote' }, t('loading')) : null,
-        error === null ? null : h('div', { className: 'ciError' }, t('failed', { reason: error })),
-        report === null ? null : h('div', { className: 'ciSummary' },
-          t('summaryCaps', { tools: stats.tools, skills: stats.skills, mcpServers: stats.mcpServers })),
-        report === null ? null : h('div', { className: 'ciBreakdown' },
-          t('summary', {
-            scanned: stats.scannedDirCount, dirs: stats.pathCount,
-            total: stats.total, withVersion: stats.withVersion,
-          }) + (stats.truncated ? t('summaryTruncated') : '')),
-        h('input', {
-          type: 'search',
-          className: 'ciSearch',
-          placeholder: t('search'),
-          value: query,
-          onChange: (event) => setQuery(event.target.value),
-        }),
-        nothingMatched ? h('div', { className: 'ciEmpty' }, t('empty')) : null,
+      /** 命令卡片：描述放版本行，等宽标签放路径。 */
+      const commandCards = (list) => list.map((entry) => {
+        const hasVersion = typeof entry.version === 'string' && entry.version !== '';
+        return h(Card, {
+          key: entry.name + entry.path,
+          title: entry.name,
+          description: hasVersion ? entry.version : t('noVersion'),
+          descriptionMissing: !hasVersion,
+          identity: entry.path,
+        });
+      });
+
+      /** 能力卡片：描述放说明，等宽标签放来源（技能提供者 / MCP 服务器）。 */
+      const capabilityCards = (list) => list.map((entry) => {
+        const description = typeof entry.description === 'string' && entry.description !== ''
+          ? entry.description
+          : (typeof entry.whenToUse === 'string' ? entry.whenToUse : '');
+        const identity = typeof entry.server === 'string' && entry.server !== ''
+          ? entry.server
+          : (typeof entry.provider === 'string' ? entry.provider : '');
+        return h(Card, { key: entry.name, title: entry.name, description, identity });
+      });
+
+      return h('div', { className: 'ciSection' },
+        h('div', { className: 'ciSearch' },
+          h(SearchIcon, {}),
+          h('input', {
+            type: 'search',
+            'aria-label': t('search'),
+            placeholder: t('search'),
+            value: query,
+            onChange: (event) => setQuery(event.target.value),
+          })),
+        error === null ? null : h('p', { className: 'ciError' }, t('failed', { reason: error })),
+        report === null && error === null ? Skeleton(t('loading')) : null,
         report === null ? null : h('div', null,
-          renderCapabilityGroup('tools', tools, 'empty.tools', null),
-          renderCapabilityGroup('skills', skills, 'empty.skills', 'hint.skills'),
-          renderCapabilityGroup('mcp', mcpTools, 'empty.mcp', 'hint.mcp'),
-          stats.mcpServers === 0 ? null : h('div', { className: 'ciNote' },
-            t('mcpServers', { servers: (Array.isArray(mcp.servers) ? mcp.servers : []).join(', ') }))),
-        report === null ? null : h('div', null,
-          rows.runtimes.length === 0 ? null : renderCommandGroup('runtimes'),
-          rows.user.length === 0 ? null : renderCommandGroup('user')),
-        h('div', { className: 'ciNote' }, t('note')));
+          nothingMatched ? h('p', { className: 'ciEmpty' }, t('empty')) : null,
+          renderCards('tools', tools, capabilityCards(tools), 'empty.tools'),
+          renderCards('skills', skills, capabilityCards(skills), 'empty.skills'),
+          renderCards('mcp', mcpTools, capabilityCards(mcpTools), 'empty.mcp'),
+          rows.runtimes.length === 0 ? null : renderCards('runtimes', rows.runtimes, commandCards(rows.runtimes), 'empty'),
+          rows.user.length === 0 ? null : renderCards('user', rows.user, commandCards(rows.user), 'empty')),
+        h('p', { className: 'ciNote' }, t('note')));
     }
 
     // ========================================================================
@@ -486,7 +546,8 @@ window.__ModuleLoader__.load({
         // （label 是 thunk，每次投影重读，所以切语言时导航文字会跟着变）。
         const tn = ctx.locale.bind(NS);
         ctx.effect(() => ctx.locale.register(NS, { zh: ZH, en: EN }), 'cli-inventory: dictionaries');
-        // 样式：幂等 + 带键 + 不随 dispose 移除（孤儿注册仍需样式；官方也是先按 key 查再注入）。
+        // 样式：幂等 + 带键 + 不随 dispose 移除（官方 dsh-client-ui-* 也是这个写法：
+        // 按 data-plugin-css 键查，已存在就复用）。
         ctx.effect(() => {
           let style = document.querySelector('style[data-dsh-style="cli-inventory"]');
           if (style === null) {
