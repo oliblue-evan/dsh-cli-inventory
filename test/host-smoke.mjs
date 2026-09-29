@@ -136,4 +136,50 @@ const fresh = JSON.parse((await call({ host: '127.0.0.1:19387' }, 'GET', '/api/c
 assert.notEqual(fresh.scannedAt, report.scannedAt, 'fresh=1 应绕过缓存重扫');
 console.log('✓ fresh=1 绕过缓存：scannedAt 已更新');
 
+// 6) 能力段：**容错**（宿主没有 tools/skills 服务时不能崩，只如实报空）
+assert.ok(report.capabilities !== null && typeof report.capabilities === 'object', '响应应带 capabilities');
+assert.deepEqual(report.capabilities.tools, [], '没有 tools 服务时应为空数组而不是报错');
+assert.deepEqual(report.capabilities.skills, [], '没有 skills 服务时应为空数组');
+assert.deepEqual(report.capabilities.mcp.servers, []);
+console.log('✓ 能力段容错：宿主未提供 tools/skills 服务时如实报空，整页照常返回');
+
+// 7) 能力段：有服务时正确读取与分离（MCP 按 mcp__<服务器>__<工具> 约定拆出）
+{
+  const capRoutes = [];
+  const capCtx = {
+    effect(fn) { const dispose = fn(); return () => { if (typeof dispose === 'function') dispose(); }; },
+    webServer: { register(r) { capRoutes.push(r); return () => {}; } },
+    get(name) {
+      if (name === 'tools') {
+        return {
+          schemas: () => [
+            { name: 'read', description: '读取文件' },
+            { name: 'bash', description: '执行 shell' },
+            { name: 'mcp__github__create_issue', description: '建 issue' },
+            { name: 42 },
+          ],
+        };
+      }
+      if (name === 'skills') {
+        return { list: async () => [{ name: 'pdf', description: '处理 PDF', provider: 'builtin', whenToUse: 7 }, { notName: true }] };
+      }
+      return undefined;
+    },
+  };
+  apply(capCtx);
+  const caps = await new Promise((resolve, reject) => {
+    const res = { statusCode: 0, setHeader() {}, end(body) { resolve(JSON.parse(String(body))); } };
+    Promise.resolve(capRoutes[0].handler(
+      { method: 'GET', headers: { host: '127.0.0.1:19387' }, url: '/api/cli-inventory/list?fresh=1' }, res,
+    )).catch(reject);
+  });
+  assert.deepEqual(caps.capabilities.tools.map((entry) => entry.name), ['bash', 'read'], '普通工具（脏条目被跳过）');
+  assert.deepEqual(caps.capabilities.mcp.servers, ['github'], 'MCP 服务器名从工具名反推');
+  assert.deepEqual(caps.capabilities.mcp.tools.map((entry) => entry.tool), ['create_issue']);
+  assert.deepEqual(caps.capabilities.skills.map((entry) => entry.name), ['pdf']);
+  assert.equal(caps.capabilities.skills[0].whenToUse, undefined, '非字符串字段不得下发');
+  console.log('✓ 能力段读取：工具', caps.capabilities.tools.length, '个 · MCP 服务器',
+    caps.capabilities.mcp.servers.join(','), '· 技能', caps.capabilities.skills.length, '个');
+}
+
 console.log('\n宿主半边冒烟测试全部通过。');

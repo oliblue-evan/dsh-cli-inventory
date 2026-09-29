@@ -24,6 +24,9 @@ import { readdir, stat } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { PROBE_CONCURRENCY, PROBE_TIMEOUT_MS, probeArgsFor } from './lib/allowlist.js';
 import {
+  MCP_TOOL_PREFIX, normalizeSkill, normalizeTool, sortByName, summarizeCapabilities,
+} from './lib/capabilities.js';
+import {
   PER_DIR_LIMIT, SYSTEM_TOTAL_LIMIT, USER_TOTAL_LIMIT,
   cap, classifyDir, isCommandEntry, joinDir, mergeByPathOrder, parseVersion, splitPath,
 } from './lib/path-scan.js';
@@ -248,12 +251,70 @@ async function scanHarnessRuntimes() {
 }
 
 /**
+ * 读取「我能用什么」：工具 / 技能 / MCP。
+ *
+ * 【为什么放在宿主】这三样都在宿主服务里（`ctx.tools` / `ctx.skills` / MCP 工具注册进
+ * `ctx.tools`），浏览器半边读不到。全部**只读**、全部**容错**：服务不存在（旧宿主、
+ * 未装对应 bundle）或抛错都只是留空，绝不让整页失败。
+ *
+ * 与"这台机器上有什么可执行文件"相比，这才是**能力清单**：`tools.schemas()` 就是每次
+ * 真正发给 Agent 的那批工具，换预设或加 MCP 服务器都会跟着变。
+ *
+ * @param ctx - 插件上下文。
+ * @returns `{ tools, skills, mcp: { servers, tools } }`。
+ */
+async function scanCapabilities(ctx) {
+  const tools = [];
+  const mcpTools = [];
+
+  // 工具注册表：MCP 贡献的按命名约定（mcp__<server>__<tool>）拆到单独的段
+  try {
+    const registry = ctx.get('tools');
+    if (registry !== undefined && typeof registry.schemas === 'function') {
+      for (const raw of registry.schemas()) {
+        const entry = normalizeTool(raw);
+        if (entry === null) continue;
+        if (entry.mcp === null) tools.push({ name: entry.name, description: entry.description });
+        else mcpTools.push({
+          name: entry.name, server: entry.mcp.server, tool: entry.mcp.tool, description: entry.description,
+        });
+      }
+    }
+  } catch {
+    // 服务不可用/接口变了：留空即可，页面会如实显示 0
+  }
+
+  // 技能注册表（`~/.dsh/skills` 与各技能提供者都会汇总到这里）
+  const skills = [];
+  try {
+    const registry = ctx.get('skills');
+    if (registry !== undefined && typeof registry.list === 'function') {
+      for (const raw of await registry.list()) {
+        const entry = normalizeSkill(raw);
+        if (entry !== null) skills.push(entry);
+      }
+    }
+  } catch {
+    // 同上
+  }
+
+  const summary = summarizeCapabilities(tools, skills, mcpTools);
+  return {
+    tools: sortByName(tools),
+    skills: sortByName(skills),
+    mcp: { servers: summary.mcpServers, tools: sortByName(mcpTools) },
+  };
+}
+
+/**
  * 组装完整数据。
+ * @param ctx - 插件上下文（能力段需要读宿主服务）。
  * @returns 响应对象。
  */
-async function buildReport() {
+async function buildReport(ctx) {
   const { dirs, commands, truncated, total, scopeCounts } = await scanCommands();
   const [versions, runtimes] = await Promise.all([probeVersions(commands), scanHarnessRuntimes()]);
+  const capabilities = await scanCapabilities(ctx);
   const entries = [
     ...runtimes.map((runtime) => ({ ...runtime, path: tilde(runtime.path), source: 'harness' })),
     // 只发 name/path/version：`dir` 对界面没用，而且是**未缩略的绝对路径** ——
@@ -269,6 +330,7 @@ async function buildReport() {
   return {
     ok: true,
     scannedAt: Date.now(),
+    capabilities,
     platform: process.platform + '/' + process.arch,
     nodeVersion: process.versions.node,
     pathCount: dirs.length,
@@ -295,10 +357,10 @@ let cache = { at: 0, report: null };
  * @param fresh - 是否强制绕过缓存。
  * @returns 报告对象。
  */
-async function reportFor(fresh) {
+async function reportFor(fresh, ctx) {
   const now = Date.now();
   if (fresh !== true && cache.report !== null && now - cache.at < CACHE_TTL_MS) return cache.report;
-  const report = await buildReport();
+  const report = await buildReport(ctx);
   cache = { at: Date.now(), report };
   return report;
 }
@@ -334,7 +396,7 @@ function apply(ctx) {
             fresh = false;
           }
         }
-        const report = await reportFor(fresh);
+        const report = await reportFor(fresh, ctx);
         const body = JSON.stringify(report);
         if (body.length > MAX_BODY) throw new Error('report too large');
         res.statusCode = 200;

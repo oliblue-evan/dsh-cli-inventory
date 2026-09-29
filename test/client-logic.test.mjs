@@ -29,6 +29,14 @@ test('过滤：空关键词原样返回；命中名称/版本/路径任一即可
   assert.deepEqual(c.filterEntries(null, 'x'), [], '脏输入不炸');
   assert.deepEqual(c.filterEntries([null, 'x', entry('a')], ''), [null, 'x', entry('a')], '不过滤时不清理脏项');
   assert.deepEqual(c.filterEntries([null, entry('a')], 'a').map((e) => e.name), ['a'], '过滤时跳过脏项');
+  // 同一函数也服务于能力条目：描述、何时使用、所属 MCP 服务器都要能被搜到
+  const capabilities = [
+    { name: 'pdf', description: '处理 PDF 文件', whenToUse: '当用户提到 PDF' },
+    { name: 'mcp__github__issue', description: '建 issue', server: 'github' },
+  ];
+  assert.deepEqual(c.filterEntries(capabilities, '处理').map((e) => e.name), ['pdf'], '按描述过滤');
+  assert.deepEqual(c.filterEntries(capabilities, '用户提到').map((e) => e.name), ['pdf'], '按 whenToUse 过滤');
+  assert.deepEqual(c.filterEntries(capabilities, 'github').map((e) => e.name), ['mcp__github__issue'], '按服务器过滤');
 });
 
 test('分组：harness → 运行时段；scope=system → 系统段；其余 → 你自己装的', () => {
@@ -93,9 +101,14 @@ test('可见段：自己装的 → 运行时+自己装的；系统 → 只有系
   assert.deepEqual(c.visibleGroups('bogus'), ['runtimes', 'user'], '未知范围按默认视图处理');
 });
 
-test('摘要：优先用宿主给的分组计数，缺失时按条目自行统计', () => {
+test('摘要：能力计数取 capabilities，命令行计数优先用宿主给的分组计数', () => {
   const report = {
     pathCount: 12, total: 1270, truncated: false, scopeCounts: { user: 7, system: 1263 },
+    capabilities: {
+      tools: [{ name: 'read' }, { name: 'bash' }],
+      skills: [{ name: 'pdf' }],
+      mcp: { servers: ['gh'], tools: [{ name: 'mcp__gh__issue' }] },
+    },
     entries: [
       entry('node', { source: 'harness', version: 'v24.0.0' }),
       entry('gh', { version: 'gh 2', scope: 'user' }),
@@ -103,6 +116,7 @@ test('摘要：优先用宿主给的分组计数，缺失时按条目自行统�
     ],
   };
   assert.deepEqual(c.summarize(report), {
+    tools: 2, skills: 1, mcpServers: 1, mcpTools: 1,
     pathCount: 12, total: 1270, withVersion: 2, user: 7, system: 1263, truncated: false,
   });
   // 宿主没给 scopeCounts / total 时按条目自行统计
@@ -110,8 +124,13 @@ test('摘要：优先用宿主给的分组计数，缺失时按条目自行统�
   assert.equal(fallback.user, 1);
   assert.equal(fallback.system, 1);
   assert.equal(fallback.total, 2, 'total 缺失时按 PATH 段条目数兜底（不含 harness 运行时）');
-  assert.deepEqual(c.summarize(null), { pathCount: 0, total: 0, withVersion: 0, user: 0, system: 0, truncated: false });
-  assert.deepEqual(c.summarize('nonsense'), { pathCount: 0, total: 0, withVersion: 0, user: 0, system: 0, truncated: false });
+  assert.equal(fallback.tools, 0, '没有 capabilities 时能力计数为 0');
+  const empty = { tools: 0, skills: 0, mcpServers: 0, mcpTools: 0, pathCount: 0, total: 0, withVersion: 0, user: 0, system: 0, truncated: false };
+  assert.deepEqual(c.summarize(null), empty);
+  assert.deepEqual(c.summarize('nonsense'), empty);
+  // capabilities 存在但字段是脏的，也应该报 0 而不是抛错
+  assert.equal(c.summarize({ capabilities: { tools: 'nope', skills: null, mcp: 42 } }).tools, 0);
+  assert.equal(c.summarize({ capabilities: { mcp: { servers: null, tools: undefined } } }).mcpServers, 0);
 });
 
 test('截断：默认上限生效，hidden 计数正确', () => {
