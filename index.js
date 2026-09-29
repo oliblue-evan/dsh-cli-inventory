@@ -21,7 +21,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { readdir, stat } from 'node:fs/promises';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { PROBE_CONCURRENCY, PROBE_TIMEOUT_MS, probeArgsFor } from './lib/allowlist.js';
 import {
   PER_DIR_LIMIT, SYSTEM_TOTAL_LIMIT, USER_TOTAL_LIMIT,
@@ -180,21 +180,69 @@ async function scanCommands() {
   };
 }
 
+/** 运行时目录里，值得列出来的可执行文件。 */
+const RUNTIME_BINARIES = ['node', 'python3'];
+
 /**
  * 找出 DSH 自带的运行时（由 harness 提供，不是用户装的），与 PATH 里的命令区分开。
+ *
+ * 两个来源，缺一不可：
+ *   1. **当前宿主进程自己**（`process.execPath`）—— 桌面版跑在 app 自带的 node 上，
+ *      这一条就是"实际在跑的是什么"。
+ *   2. **`$DSH_HOME/dsh-runtimes/<runtime>/dependencies/<dep>/bin/*`** —— CLI 侧安装的
+ *      node / python。
+ *
+ * 【踩过的坑】早先只从 `process.execPath` 旁边推 python 路径（`../python/bin/python3`）。
+ * 那在 CLI 启动时成立，但在**桌面版下必然失败** —— app 的 node 旁边没有 python，
+ * 于是界面上只有一个 node、python 凭空消失。改成扫运行时目录后两种启动方式都能列全。
+ *
  * @returns `[{ name, path, version }]`。
  */
 async function scanHarnessRuntimes() {
   const runtimes = [];
-  const execPath = process.execPath;
-  if (typeof execPath === 'string' && execPath !== '') {
-    runtimes.push({ name: 'node', path: execPath, version: await runProbe(execPath, ['--version']) });
+  const seen = new Set();
+
+  /** 收一个运行时（按真实路径去重，探一次版本）。 */
+  const collect = async (binaryName, filePath) => {
+    if (typeof filePath !== 'string' || filePath === '' || seen.has(filePath)) return;
+    if (!existsSync(filePath)) return;
+    seen.add(filePath);
+    runtimes.push({ name: binaryName, path: filePath, version: await runProbe(filePath, ['--version']) });
+  };
+
+  await collect('node', process.execPath);
+
+  const dshHome = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME !== ''
+    ? process.env.DSH_HOME
+    : join(homedir(), '.dsh');
+  const runtimesRoot = join(dshHome, 'dsh-runtimes');
+  let runtimeNames = [];
+  try {
+    runtimeNames = await readdir(runtimesRoot);
+  } catch {
+    runtimeNames = []; // 没装 CLI 运行时也正常（纯桌面版环境）
   }
-  // 由 node 的位置推出同级 python：<runtime>/dependencies/{node,python}/bin/*
-  const candidates = [resolve(dirname(execPath), '..', '..', 'python', 'bin', 'python3')];
-  for (const candidate of candidates) {
-    if (!existsSync(candidate)) continue;
-    runtimes.push({ name: 'python3', path: candidate, version: await runProbe(candidate, ['--version']) });
+  for (const runtimeName of runtimeNames) {
+    const dependenciesRoot = join(runtimesRoot, runtimeName, 'dependencies');
+    let dependencyNames = [];
+    try {
+      dependencyNames = await readdir(dependenciesRoot);
+    } catch {
+      continue;
+    }
+    for (const dependencyName of dependencyNames) {
+      const binDir = join(dependenciesRoot, dependencyName, 'bin');
+      let binaries = [];
+      try {
+        binaries = await readdir(binDir);
+      } catch {
+        continue;
+      }
+      for (const binary of binaries) {
+        if (!RUNTIME_BINARIES.includes(binary)) continue;
+        await collect(binary, join(binDir, binary));
+      }
+    }
   }
   return runtimes;
 }

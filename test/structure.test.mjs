@@ -12,7 +12,10 @@ import { readFileSync } from 'node:fs';
 import { clientSource, pureLogicBlock } from './extract-client.mjs';
 
 /** 测试依赖的纯逻辑符号。 */
-const REQUIRED = ['ROW_LIMIT', 'filterEntries', 'groupEntries', 'summarize', 'capRows'];
+const REQUIRED = [
+  'ROW_LIMIT', 'filterEntries', 'groupEntries', 'sortForDisplay',
+  'resolveScope', 'visibleGroups', 'summarize', 'capRows',
+];
 
 test('纯逻辑标记各出现一次，且区块内确有测试依赖的符号', () => {
   const source = clientSource();
@@ -33,14 +36,53 @@ test('纯逻辑区块不含 React / DOM（这是它能被直接求值的前提�
   }
 });
 
-test('样式在插件级注入一次，而不是塞在组件树里', () => {
+test('样式是插件级幂等注入：按键复用同一个 <style>，且不塞进某个槽位的组件树里', () => {
   const source = clientSource();
+  // 踩过的坑 1：<style> 原先放在徽标组件的返回树里，而设置卡是在**另一个槽位**
+  // （插件页的 plugins.bundle.config）渲染的 —— 那边一个样式都拿不到，
+  // 整张卡退化成挤成一行的裸文字 + 原生复选框。所以样式必须挂在插件 fiber 上。
+  // 踩过的坑 2：原先 dispose 时移除 <style>，一旦出现孤儿注册（HMR 重载期间的旧实例），
+  // 页面就变成「组件还在、样式没了」。所以改成按键复用、不随 dispose 移除。
   assert.match(
     source,
-    /ctx\.effect\(\(\) => \{\s*const style = document\.createElement\('style'\)/,
-    '缺少插件级样式注入（ctx.effect + document.createElement(\'style\')）',
+    /ctx\.effect\(\(\) => \{\s*let style = document\.querySelector\('style\[data-dsh-style=/,
+    '缺少插件级幂等样式注入（按键 querySelector 复用，官方也是这个写法）',
   );
-  assert.ok(!/h\('style'/.test(source), '不应在组件树里渲染 <style>：换个槽位就一个样式都拿不到');
+  assert.match(source, /style\.textContent = CSS/, '每次 apply 都应刷新样式内容，否则更新版本会用到旧样式');
+  assert.ok(
+    !/style\.remove\(\)/.test(source),
+    '不应随 dispose 移除：孤儿注册仍需样式，否则页面会变成「组件还在、样式没了」',
+  );
+  assert.ok(
+    !/h\('style', null, CSS\)/.test(source),
+    '不应再在组件树里渲染 <style>：其它槽位的组件拿不到它',
+  );
+});
+
+test('每个内联 SVG 都必须有显式 width/height', () => {
+  // 一个只有 viewBox 的 SVG 在没有 CSS 时**会撑满容器** —— 这正是"徽标变成巨型
+  // 图标"那个故障的放大器。根因修掉之后，这条门禁保证放大器不会回来。
+  const source = clientSource();
+  const marker = "h('svg', {";
+  const offenders = [];
+  let index = source.indexOf(marker);
+  while (index !== -1) {
+    let depth = 0;
+    let end = index + marker.length - 1;
+    for (let cursor = end; cursor < source.length; cursor += 1) {
+      if (source[cursor] === '{') depth += 1;
+      else if (source[cursor] === '}') {
+        depth -= 1;
+        if (depth === 0) { end = cursor; break; }
+      }
+    }
+    const block = source.slice(index, end + 1);
+    if (!/\bwidth:\s*\d/.test(block) || !/\bheight:\s*\d/.test(block)) {
+      offenders.push(block.replace(/\s+/g, ' ').slice(0, 70));
+    }
+    index = source.indexOf(marker, end);
+  }
+  assert.ok(offenders.length === 0, '这些内联 SVG 缺显式宽高：' + offenders.join(' | '));
 });
 
 test('宿主半边只用相对路径与 node: 内置模块（link: 安装下裸模块名解析不到）', () => {
@@ -90,4 +132,20 @@ test('每个 slots.inject 都必须紧贴在 ctx.effect(() => …) 里（否则 
   const wrapped = [...source.matchAll(/ctx\.effect\(\(\)\s*=>\s*ctx\.slots\.inject\(/g)].length;
   assert.ok(total > 0, '本插件应当至少有一处 slots.inject');
   assert.equal(wrapped, total, `有 ${total - wrapped} 处 slots.inject 没有紧跟 ctx.effect(() => …)`);
+});
+
+test('凡是用 999px / 50% 做圆角的地方，都必须显式退出全局超椭圆', () => {
+  // 宿主用 `*,:before,:after { corner-shape: superellipse(1.5) }` 把全局圆角改成了超椭圆，
+  // 于是"胶囊/正圆"会被压成偏方的形状。想要真圆必须自己声明 corner-shape:round。
+  const source = clientSource();
+  const match = source.match(/const CSS = `([\s\S]*?)`;/);
+  assert.ok(match !== null, '找不到 CSS 模板字符串');
+  const offenders = [];
+  for (const block of match[1].split('}')) {
+    if (!/border-radius\s*:\s*(999px|50%)/.test(block)) continue;
+    if (!/corner-shape\s*:\s*round/.test(block)) {
+      offenders.push(block.trim().split('\n').pop().trim().slice(0, 60));
+    }
+  }
+  assert.deepEqual(offenders, [], '这些规则用了胶囊/正圆但没写 corner-shape:round：' + offenders.join(' | '));
 });
