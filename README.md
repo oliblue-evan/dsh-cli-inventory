@@ -54,17 +54,30 @@ DSH 的设置里只有账户 / 通用 / 模型 / 插件 / 智能体预设五页 
   gh · uv · dsh · tailscale · uvx · …
 ```
 
-## 版式照官方「内置插件」页
+## 版式与交互照官方「内置插件」页
 
-页面样式不是自己发明的，是照 `dsh-client-ui-settings-plugin-inventory`（设置 → 内置插件）
-逐项抄的：`max-width:760px` 的 section、带放大镜的搜索框（36px 高、`.5px` 描边、
-`color-mix` 焦点环）、组标题（chevron 折叠 + `·` 分隔的副行）、
-**两列卡片网格**（容器宽度 ≤520px 时回落单列）、卡片里的
-「标题 / 两行描述 / 等宽身份标签」，以及加载时的骨架卡。
+照的是 **DSH 开源仓库里的真源码**（不是打包产物反推）：
 
-关键是**用的是设置页专用 token**：`--dsw-alias-settings-card-stroke`、
-`--dsw-alias-settings-card-fill`、`--dsw-alias-bg-module-platform`、`--dsw-radius-*`、
-`--ds-font-family-code` —— 所以它在设置里看起来是原生的，而不是"外来的控件"。
+- `packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.tsx`
+- 同目录 `PluginInventorySettingsTab.module.css`
+
+对齐的东西（前两版做过两处明显错处，都在这里修掉了）：
+
+| 要素 | 具体做法 |
+|---|---|
+| 层级与间距 | 根 `.section`（gap **14**、max-width 760、container）→ `.catalog`（gap **12**）→ 搜索框与各组。**间距差在这 14/12 两层上** |
+| 搜索框 | 外层是 **`<label>`**（点标签即聚焦），内嵌放大镜（`absolute;left:12px`）、`visuallyHidden` 文案、36px 高、`.5px` 描边、`color-mix` 焦点环 |
+| 组 | `.groupTitleRow`（`min-height:36px`，chevron + 标题）+ `p.groupSub`（若干 `<span>` 用 `·` 分隔，**计数也是其中一项**）+ `.groupBody` |
+| **卡片可点击展开** | `li.card[data-open]` 内是 **`button.cardContent`**（`aria-expanded` + `aria-controls`），右侧 `.cardTrailing` 放 **chevron**（展开时 `rotate(180deg)`）；**同时只展开一张卡**（官方 `expanded: string | null`） |
+| 展开后的详情 | `.cardDetails` 里：`<code class="entryValue">` + `<dl class="details">` 键值表（`grid-template-columns:76px minmax(0,1fr)`、`div{display:contents}`、`dt` 11px 三级色 / `dd` 12px 二级色） |
+| 卡片内容 | 标题是 **`<strong>`**（14/20、500）、描述 `<span>`（12/18、**两行截断**，展开后不再截断）、等宽身份标签是 **`<code>`**（`--dsw-alias-bg-module-platform` + `--ds-font-family-code`） |
+| 加载/错误 | 骨架卡用**同一个 `.cards` 网格**（4 张）+ `visuallyHidden` 文案；错误态给「重试」按钮（官方也只有这里才有重试按钮） |
+
+用的是设置页专用 token（`--dsw-alias-settings-card-stroke/-fill`、`--dsw-alias-bg-module-platform`、
+`--dsw-radius-*`、`--ds-font-family-code`），所以它在设置里看起来是原生的。
+
+**展开看什么**：折叠时描述被截成两行，展开正好读**完整描述**；命令类卡片展开给出
+「版本 / 路径」，技能给出「提供者 / 何时使用」，MCP 给出「服务器 / 原始工具名」。
 
 > **一个事后拿到官方背书的巧合**：官方注入样式的方式是「按 `data-plugin-css` 键
 > `querySelector`，已存在就复用、**从不移除**」。这与我在 `dsh-usage-pill` 上修完

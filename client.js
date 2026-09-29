@@ -5,31 +5,31 @@
  * 那批工具）、技能注册表、MCP 服务器贡献的工具，然后是"你自己装的"命令行工具与
  * DSH 自带运行时。
  *
- * 【版式对齐官方「内置插件」页】整套行/卡片体系照 `dsh-client-ui-settings-plugin-inventory`
- * 抄：`max-width:760px` 的 section、带放大镜的搜索框、组标题（可折叠 + chevron）与
- * `·` 分隔的副行、两列卡片网格（窄容器回落单列）、等宽「身份标签」放路径。
- * 用的是**设置页专用 token**（`--dsw-alias-settings-card-stroke/-fill`、
- * `--dsw-alias-bg-module-platform`、`--dsw-radius-*`），所以它在设置里看起来是原生的。
+ * 【版式与交互照官方源码】不是从打包产物反推，而是照
+ * `packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.tsx`
+ * 与同目录 `.module.css` 逐项对齐：
  *
- * 【一处值得记下的巧合】官方注入样式的方式是「按 `data-plugin-css` 键 querySelector，
- * 已存在就复用、**从不移除**」—— 与我修完「组件还在、样式没了」那个 bug 后改成的写法
- * 完全一致，算是事后拿到了官方背书。
+ *   .section(gap 14 / max-width 760 / container)      ← 根
+ *     └ .catalog(gap 12)
+ *         ├ label.search(内嵌放大镜 + visuallyHidden 标签 + input)
+ *         └ section.group
+ *             ├ .groupTitleRow  → button.groupToggle(chevron + 标题)
+ *             ├ p.groupSub      → 若干 span，用 `·` 分隔（**计数也在这里**）
+ *             └ .groupBody      → ul.cards → li.card
  *
- * 【本文件的组织方式】
- *   客户端 bundle **必须是单文件**：宿主把各插件的 bundle 拼接成一个 combo 脚本、
- *   以**传统脚本**执行（`window.__ModuleLoader__` 处于 queue 模式，只登记工厂函数），
- *   所以这里写 ES 相对 import 并不成立。用「目录 + 显式 region 标记」代替拆文件：
+ * 卡片是**可点击展开**的：`li.card[data-open]` 内是 `button.cardContent`
+ * （`aria-expanded` + `aria-controls`），右侧 `.cardTrailing` 里放 chevron
+ * （展开时 `rotate(180deg)`），展开后渲染 `.cardDetails` —— 里面是
+ * `<code class="entryValue">` 加一张 `<dl class="details">` 键值表
+ * （`grid-template-columns:76px minmax(0,1fr)`，`div{display:contents}`）。
+ * **同时只展开一张卡**（官方 `expanded: string | null`）。
  *
- *     1. 纯逻辑     过滤 / 分组 / 排序 / 摘要 / 截断（不含 React/DOM，可被测试抽取）
- *     2. 文案       中英词典
- *     3. 样式       CSS，照官方内置插件页
- *     4. 组件       设置页本体
- *     5. apply      注册到 settings.section
- *
- *   第 1 节包在 `#region 纯逻辑` 里，`test/extract-client.mjs` 按标记抽取后直接单测。
+ * 【本文件的组织方式】客户端 bundle **必须是单文件**（宿主把各插件 bundle 拼成
+ * combo 脚本、以传统脚本执行），所以用「目录 + region 标记」代替拆文件。
+ * 第 1 节包在 `#region 纯逻辑` 里，`test/extract-client.mjs` 按标记抽取后直接单测。
  *
  * 【三条纪律】（都是踩过的坑）
- *   · 样式幂等注入、不随 dispose 移除 —— 否则出现孤儿注册时页面会变成「组件还在、样式没了」。
+ *   · 样式幂等注入、不随 dispose 移除（官方也是按键 querySelector 复用、从不移除）。
  *   · `slots.inject` 返回 dispose 函数，**必须**用 `ctx.effect` 包住，否则注册会泄漏。
  *   · 内联 SVG 必须写死宽高：只有 viewBox 的 SVG 在没有 CSS 时会撑满容器。
  */
@@ -39,7 +39,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useId } = React;
 
     // ========================================================================
     // 1. 纯逻辑（不含 React/DOM）
@@ -49,6 +49,9 @@ window.__ModuleLoader__.load({
 
     /** 每段最多渲染多少张卡片；其余靠搜索缩小范围。 */
     const ROW_LIMIT = 80;
+
+    /** 骨架卡片的数量（官方 SKELETON_CARDS 是 4 个）。 */
+    const SKELETON_CARDS = [0, 1, 2, 3];
 
     /**
      * 按关键词过滤条目。
@@ -144,6 +147,31 @@ window.__ModuleLoader__.load({
       return { rows: list.slice(0, max), hidden: Math.max(0, list.length - max) };
     }
 
+    /**
+     * 展开时显示的键值对（照官方 CardFacts 的形状：`[label, value]`）。
+     *
+     * 折叠时描述被截成两行，展开正好用来看**完整**描述 —— 这就是这张卡"能点开"的价值。
+     *
+     * @param entry - 条目。
+     * @param t - 文案函数。
+     * @returns `[label, value]` 数组（自动跳过空值）。
+     */
+    function factsFor(entry, t) {
+      const rows = [];
+      const push = (label, value) => {
+        if (value === undefined || value === null || value === '') return;
+        rows.push([label, String(value)]);
+      };
+      if (typeof entry.server === 'string' && entry.server !== '') push(t('fact.server'), entry.server);
+      if (typeof entry.tool === 'string' && entry.tool !== '') push(t('fact.rawName'), entry.tool);
+      if (typeof entry.provider === 'string' && entry.provider !== '') push(t('fact.provider'), entry.provider);
+      if (typeof entry.whenToUse === 'string' && entry.whenToUse !== '') push(t('fact.whenToUse'), entry.whenToUse);
+      if (typeof entry.version === 'string' && entry.version !== '') push(t('fact.version'), entry.version);
+      if (typeof entry.path === 'string' && entry.path !== '') push(t('fact.path'), entry.path);
+      if (typeof entry.description === 'string' && entry.description !== '') push(t('fact.description'), entry.description);
+      return rows;
+    }
+
     // #endregion 纯逻辑
 
     // ========================================================================
@@ -158,6 +186,8 @@ window.__ModuleLoader__.load({
       'nav': '环境与能力',
       'search': '搜索工具、技能、命令…',
       'loading': '正在读取…',
+      'retry': '重试',
+      'countUnit': '个',
       'group.tools': '工具',
       'group.skills': '技能',
       'group.mcp': 'MCP',
@@ -171,6 +201,13 @@ window.__ModuleLoader__.load({
       'sub.user': '扫了 PATH 中 {scanned}/{dirs} 个目录',
       'sub.versions': '取到版本 {withVersion} 个',
       'sub.truncated': '已截断，只列出一部分',
+      'fact.server': '服务器',
+      'fact.rawName': '原始工具名',
+      'fact.provider': '提供者',
+      'fact.whenToUse': '何时使用',
+      'fact.version': '版本',
+      'fact.path': '路径',
+      'fact.description': '说明',
       'empty.tools': '读不到工具注册表（宿主未提供 tools 服务）。',
       'empty.skills': '还没有技能。把技能放到 ~/.dsh/skills/<名字>/SKILL.md 就会出现。',
       'empty.mcp': '还没有配置 MCP 服务器；配置后它们贡献的工具会出现在这里。',
@@ -187,6 +224,8 @@ window.__ModuleLoader__.load({
       'nav': 'Environment & capabilities',
       'search': 'Search tools, skills, commands…',
       'loading': 'Reading…',
+      'retry': 'Retry',
+      'countUnit': 'items',
       'group.tools': 'Tools',
       'group.skills': 'Skills',
       'group.mcp': 'MCP',
@@ -200,6 +239,13 @@ window.__ModuleLoader__.load({
       'sub.user': 'scanned {scanned}/{dirs} PATH directories',
       'sub.versions': '{withVersion} with a version',
       'sub.truncated': 'truncated; only part is listed',
+      'fact.server': 'server',
+      'fact.rawName': 'raw tool name',
+      'fact.provider': 'provider',
+      'fact.whenToUse': 'when to use',
+      'fact.version': 'version',
+      'fact.path': 'path',
+      'fact.description': 'description',
       'empty.tools': 'The tool registry is unavailable (no `tools` service on this host).',
       'empty.skills': 'No skills yet. Drop one at ~/.dsh/skills/<name>/SKILL.md and it shows up here.',
       'empty.mcp': 'No MCP server configured yet; the tools it contributes will appear here.',
@@ -252,60 +298,79 @@ window.__ModuleLoader__.load({
     }
 
     // ========================================================================
-    // 3. 样式（照 dsh-client-ui-settings-plugin-inventory 的体系）
+    // 3. 样式（照 PluginInventorySettingsTab.module.css）
     // ========================================================================
 
     const CSS = `
-.ciSection{box-sizing:border-box;width:100%;max-width:760px;color:var(--dsw-alias-label-primary);
-  flex-direction:column;gap:14px;display:flex;container:ci-inventory/inline-size}
-.ciSearch{position:relative;width:100%;color:var(--dsw-alias-label-tertiary);align-items:center;display:flex}
-.ciSearch>svg{pointer-events:none;position:absolute;left:12px}
-.ciSearch input{box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);
-  background:var(--dsw-alias-bg-layer-1);width:100%;height:36px;color:var(--dsw-alias-label-primary);
-  font:inherit;font-size:13px;outline:none;padding:0 34px 0 36px}
+.ciSection{container:ci-inventory/inline-size;display:flex;flex-direction:column;gap:14px;width:100%;max-width:760px;
+  color:var(--dsw-alias-label-primary)}
+.ciStatus{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary)}
+.ciStatusWithDot{display:inline-flex;align-items:center;gap:6px}
+.ciFailure{display:flex;align-items:center;gap:10px;font-size:13px;line-height:20px;color:var(--dsw-alias-state-error-primary)}
+.ciFailure p{margin:0}
+.ciFailure button{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);padding:4px 10px;
+  background:transparent;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer}
+.ciCatalog{display:flex;flex-direction:column;gap:12px}
+.ciSearch{position:relative;display:flex;align-items:center;width:100%;color:var(--dsw-alias-label-tertiary)}
+.ciSearch>svg{position:absolute;left:12px;pointer-events:none}
+.ciSearch input{width:100%;height:36px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);
+  padding:0 34px 0 36px;outline:none;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);
+  font:inherit;font-size:13px}
 .ciSearch input::placeholder{color:var(--dsw-alias-label-tertiary)}
 .ciSearch input:focus-visible{border-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));
   box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)) 18%, transparent)}
-.ciGroup{flex-direction:column;gap:10px;display:flex}
+.ciCards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none}
+.ciCard{display:flex;flex-direction:column;min-width:0;overflow:hidden;border:.5px solid var(--dsw-alias-settings-card-stroke);
+  border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}
+.ciCard[data-open='true']{border-color:var(--dsw-alias-border-l3)}
+.ciCard:nth-child(odd)[data-open='true']+.ciCard,
+.ciCard:nth-child(odd):has(+.ciCard[data-open='true']){align-self:start}
+.ciCardContent{box-sizing:border-box;display:flex;flex:1 1 auto;flex-direction:column;align-items:stretch;gap:2px;width:100%;
+  min-height:52px;border:0;padding:12px 14px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.ciCardContent:hover,.ciCard[data-open='true']>.ciCardContent{background:var(--dsw-alias-interactive-bg-hover)}
+.ciCardContent:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}
+.ciCardMainRow{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
+.ciCardTitle,.ciCardIdentity{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ciCardTitle{flex:1;min-width:0;font-size:14px;line-height:20px;font-weight:500}
+.ciCardDescription{display:-webkit-box;overflow:hidden;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;
+  text-wrap:pretty;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.ciCard[data-open='true'] .ciCardDescription{display:block}
+.ciCardMeta{display:flex;margin-top:auto;padding-top:6px}
+.ciCardIdentity,.ciEntryValue{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;line-height:18px}
+.ciCardIdentity{display:block;box-sizing:border-box;max-width:100%;border-radius:var(--dsw-radius-xs);padding:1px 6px;
+  background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary)}
+.ciCardTrailing{display:inline-flex;flex:none;align-items:center;gap:8px;color:var(--dsw-alias-label-tertiary)}
+.ciGroup{display:flex;flex-direction:column;gap:10px}
+.ciGroupTitleRow{display:flex;align-items:center;gap:8px;min-height:36px}
 .ciGroup+.ciGroup{border-top:.5px solid var(--dsw-alias-border-l2);padding-top:14px}
-.ciGroupTitleRow{align-items:center;gap:8px;min-height:36px;display:flex}
-.ciGroupToggle{color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:0;flex:none;
-  align-items:center;gap:8px;padding:0;display:flex}
+.ciGroupToggle{display:flex;flex:none;align-items:center;gap:8px;border:0;padding:0;background:transparent;color:inherit;
+  font:inherit;text-align:left;cursor:pointer}
 .ciGroupToggle:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 .ciGroupToggle>.ciChevron{transform:rotate(-90deg)}
-.ciGroupToggle[aria-expanded=true]>.ciChevron{transform:none}
-.ciGroupTitle{color:var(--dsw-alias-label-primary);font-size:14px;font-weight:400;line-height:22px}
-.ciCount{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;font-size:12px;line-height:18px}
-.ciGroupSub{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;flex-wrap:wrap;row-gap:4px;
-  margin:-6px 0 0 20px;font-size:12px;line-height:18px;display:flex}
-.ciGroupSub>*+*:before{content:"·";color:var(--dsw-alias-label-tertiary);padding:0 6px}
-.ciGroupBody{flex-direction:column;gap:10px;display:flex}
-.ciCards{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none;display:grid}
-.ciCard{border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);
-  background:var(--dsw-alias-settings-card-fill);flex-direction:column;min-width:0;display:flex;overflow:hidden}
-.ciCardContent{box-sizing:border-box;width:100%;min-height:52px;color:inherit;font:inherit;text-align:left;
-  background:0 0;border:0;flex-direction:column;flex:auto;align-items:stretch;gap:2px;padding:12px 14px;display:flex}
-.ciCardMainRow{justify-content:space-between;align-items:center;gap:12px;min-width:0;display:flex}
-.ciCardTitle,.ciCardIdentity{text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
-.ciCardTitle{flex:1;min-width:0;font-size:14px;font-weight:500;line-height:20px}
-.ciCardDescription{color:var(--dsw-alias-label-tertiary);text-wrap:pretty;-webkit-line-clamp:2;-webkit-box-orient:vertical;
-  font-size:12px;line-height:18px;display:-webkit-box;overflow:hidden}
-.ciCardDescription[data-missing=true]{color:var(--dsw-alias-label-tertiary);font-style:normal;opacity:.85}
-.ciCardMeta{margin-top:auto;padding-top:6px;display:flex}
-.ciCardIdentity{box-sizing:border-box;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);
-  max-width:100%;color:var(--dsw-alias-label-secondary);padding:1px 6px;display:block;
-  font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;line-height:18px}
-.ciChevron{color:var(--dsw-alias-label-tertiary);flex:none;align-self:center;width:12px;height:12px}
-.ciSkeletonCard{border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);
-  background:var(--dsw-alias-settings-card-fill);flex-direction:column;gap:8px;padding:15px 14px;display:flex}
-.ciSkeletonBar{border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-skeleton);width:40%;height:14px}
+.ciGroupToggle[aria-expanded='true']>.ciChevron{transform:none}
+.ciGroupTitle{font-size:14px;line-height:22px;font-weight:400;color:var(--dsw-alias-label-primary)}
+.ciGroupSub{display:flex;flex-wrap:wrap;row-gap:4px;margin:-6px 0 0 20px;color:var(--dsw-alias-label-tertiary);
+  font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}
+.ciGroupSub>*+*::before{content:'·';padding:0 6px;color:var(--dsw-alias-label-tertiary)}
+.ciGroupBody{display:flex;flex-direction:column;gap:10px}
+.ciChevron{flex:none;color:var(--dsw-alias-label-tertiary)}
+.ciCard[data-open='true'] .ciChevron{transform:rotate(180deg)}
+.ciCardDetails{border-top:.5px solid var(--dsw-alias-border-l2);padding:10px 14px 12px;background:var(--dsw-alias-bg-module-platform)}
+.ciEntryValue{display:block;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}
+.ciDetails{display:grid;grid-template-columns:76px minmax(0,1fr);gap:6px 10px;margin:8px 0 0}
+.ciDetails div{display:contents}
+.ciDetails dt{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:17px}
+.ciDetails dd{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:17px}
+.ciSkeletonCard{display:flex;flex-direction:column;gap:8px;border:.5px solid var(--dsw-alias-settings-card-stroke);
+  border-radius:var(--dsw-radius-xl);padding:15px 14px;background:var(--dsw-alias-settings-card-fill)}
+.ciSkeletonBar{width:40%;height:14px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-skeleton)}
 .ciSkeletonBar+.ciSkeletonBar{width:80%;height:12px}
-.ciEmpty,.ciNote{color:var(--dsw-alias-label-tertiary);margin:0;font-size:12px;line-height:18px}
-.ciError{color:var(--dsw-alias-state-error-primary);margin:0;font-size:13px;line-height:20px}
-@media (prefers-reduced-motion:no-preference){.ciChevron{transition:transform .14s ease}
-.ciSkeletonBar{animation:2s cubic-bezier(.36,0,.64,1) infinite ci-inventory-skeleton}}
+.ciNote{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
+.ciVisuallyHidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+@media (prefers-reduced-motion:no-preference){.ciChevron{transition:transform 140ms ease}
+.ciSkeletonBar{animation:ci-inventory-skeleton 2s cubic-bezier(.36,0,.64,1) infinite}}
 @keyframes ci-inventory-skeleton{0%{opacity:1}40%{opacity:.6}80%,to{opacity:1}}
-@container ci-inventory (width<=520px){.ciCards{grid-template-columns:minmax(0,1fr)}}
+@container ci-inventory (max-width:520px){.ciCards{grid-template-columns:minmax(0,1fr)}}
 `;
 
     // ========================================================================
@@ -317,12 +382,10 @@ window.__ModuleLoader__.load({
     const EMPTY_MCP = { servers: [], tools: [] };
 
     /**
-     * 折叠指示三角（12px，颜色随父级）。
-     * @param props - 未使用（保持与官方同构的签名）。
+     * 向下的三角（展开时由 CSS 旋转 180°）。
      * @returns 内联 SVG（宽高写死：无 CSS 时才不会撑满容器）。
      */
-    function ChevronIcon(props) {
-      void props;
+    function ChevronDown() {
       return h('svg', {
         viewBox: '0 0 12 12', width: 12, height: 12, 'aria-hidden': true, fill: 'none', stroke: 'currentColor',
         strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'ciChevron',
@@ -337,53 +400,68 @@ window.__ModuleLoader__.load({
       return h('svg', {
         viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': true, fill: 'none', stroke: 'currentColor',
         strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round',
-      },
-      h('circle', { cx: 7, cy: 7, r: 4.5 }),
-      h('path', { d: 'M10.5 10.5 14 14' }));
+      }, h('circle', { cx: 7, cy: 7, r: 4.5 }), h('path', { d: 'M10.5 10.5 14 14' }));
     }
 
     /**
-     * 一张卡片：标题 + 描述 + 可选等宽身份标签。
-     * @param props.title - 主标题（工具名 / 命令名）。
-     * @param props.description - 描述（工具说明 / 版本行）。
-     * @param props.descriptionMissing - 描述是否表示"没有版本"（用弱化样式）。
-     * @param props.identity - 等宽标签（路径 / 来源）。
+     * 一张可展开的卡片（照官方 PluginCard）。
+     *
+     * 折叠时：标题行（标题 + 尾部 chevron）、两行截断的描述、可选等宽身份标签。
+     * 展开时：`.ciCardDetails` 里给出 identity 与一张键值表（完整描述在这里）。
+     *
+     * @param props - `{ title, description, descriptionMissing, identity, facts, open, onToggle, t }`。
      * @returns 卡片元素。
      */
-    function Card({ title, description, descriptionMissing, identity }) {
+    function Card({ title, description, descriptionMissing, identity, facts, open, onToggle, t }) {
+      const detailId = useId();
+      const hasDescription = typeof description === 'string' && description !== '';
       const hasIdentity = typeof identity === 'string' && identity !== '';
-      return h('li', { className: 'ciCard' },
-        h('div', { className: 'ciCardContent' },
-          h('div', { className: 'ciCardMainRow' },
-            h('span', { className: 'ciCardTitle', title }, title)),
-          description === '' || description === undefined ? null : h('div', {
+      const rows = Array.isArray(facts) ? facts : [];
+      return h('li', { className: 'ciCard', 'data-open': open ? 'true' : undefined },
+        h('button', {
+          type: 'button',
+          className: 'ciCardContent',
+          'aria-expanded': open,
+          'aria-controls': detailId,
+          'aria-label': title + ' — ' + t(open ? 'collapse' : 'expand'),
+          onClick: onToggle,
+        },
+          h('span', { className: 'ciCardMainRow' },
+            h('strong', { className: 'ciCardTitle', title }, title),
+            h('span', { className: 'ciCardTrailing' }, h(ChevronDown, {}))),
+          hasDescription ? h('span', {
             className: 'ciCardDescription',
-            'data-missing': descriptionMissing === true ? 'true' : 'false',
-            title: description,
-          }, description),
-          hasIdentity ? h('div', { className: 'ciCardMeta' },
-            h('span', { className: 'ciCardIdentity', title: identity }, identity)) : null));
+            'data-missing': descriptionMissing === true ? 'true' : undefined,
+          }, description) : null,
+          hasIdentity ? h('span', { className: 'ciCardMeta' },
+            h('code', { className: 'ciCardIdentity', title: identity }, identity)) : null),
+        open ? h('div', { className: 'ciCardDetails', id: detailId },
+          hasIdentity ? h('code', { className: 'ciEntryValue' }, identity) : null,
+          rows.length === 0 ? null : h('dl', { className: 'ciDetails' },
+            rows.map(([label, value]) => h('div', { key: label + value },
+              h('dt', null, label),
+              h('dd', null, value))))) : null);
     }
 
     /**
-     * 加载骨架（照官方的 skeletonCard）。
-     * @param label - 无障碍标签（「正在读取…」）。
-     * @returns 三张占位卡。
+     * 骨架卡片（照官方：用同一个 `.cards` 网格）。
+     * @param props.label - 无障碍标签。
+     * @returns 骨架网格。
      */
-    function Skeleton(label) {
-      return h('div', { className: 'ciGroup', role: 'status', 'aria-label': label },
-        h('ul', { className: 'ciCards' },
-          [0, 1, 2].map((index) => h('li', { key: index, className: 'ciSkeletonCard' },
-            h('div', { className: 'ciSkeletonBar' }),
-            h('div', { className: 'ciSkeletonBar' })))));
+    function SkeletonCards({ label }) {
+      return h('div', { className: 'ciCards', role: 'status' },
+        h('span', { className: 'ciVisuallyHidden' }, label),
+        SKELETON_CARDS.map((slot) => h('div', { key: slot, className: 'ciSkeletonCard', 'aria-hidden': true },
+          h('span', { className: 'ciSkeletonBar' }),
+          h('span', { className: 'ciSkeletonBar' }))));
     }
 
     /**
-     * 一组（可折叠）。组标题行 = chevron + 标题；副行用 `·` 分隔若干事实。
-     * @param props - `{ title, count, facts, children, open, onToggle, t }`。
+     * 一组（照官方 section.group）。
+     * @param props - `{ title, facts, children, open, onToggle, t }`。
      * @returns 组元素。
      */
-    function Group({ title, count, facts, children, open, onToggle, t }) {
+    function Group({ title, facts, children, open, onToggle, t }) {
       const items = Array.isArray(facts) ? facts.filter((item) => typeof item === 'string' && item !== '') : [];
       return h('section', { className: 'ciGroup' },
         h('div', { className: 'ciGroupTitleRow' },
@@ -394,20 +472,15 @@ window.__ModuleLoader__.load({
             title: open ? t('collapse') : t('expand'),
             onClick: onToggle,
           },
-            h(ChevronIcon, {}),
-            h('span', { className: 'ciGroupTitle' }, title)),
-          h('span', { className: 'ciCount' }, String(count))),
-        items.length === 0 ? null : h('div', { className: 'ciGroupSub' },
-          items.map((item) => h('span', { key: item }, item))),
+            h(ChevronDown, {}),
+            h('span', { className: 'ciGroupTitle' }, title))),
+        items.length === 0 ? null : h('p', { className: 'ciGroupSub' },
+          items.map((item, index) => h('span', { key: item + index }, item))),
         open ? h('div', { className: 'ciGroupBody' }, children) : null);
     }
 
     /**
      * 「环境与能力」设置页。
-     *
-     * 没有刷新按钮：宿主一次扫描约 40ms，且每次打开这一页都会重新取数 ——
-     * 按钮只会多一个需要解释的机关。
-     *
      * @param props - 槽位属性（`t` / `close` 等）。
      * @returns 页面元素。
      */
@@ -415,11 +488,16 @@ window.__ModuleLoader__.load({
       const t = translator(props);
       const [report, setReport] = useState(null);
       const [error, setError] = useState(null);
+      const [request, setRequest] = useState(0);
       const [query, setQuery] = useState('');
+      // 照官方：同时只展开一张卡（`string | null`）
+      const [expanded, setExpanded] = useState(null);
       const [open, setOpen] = useState({ tools: true, skills: true, mcp: true, runtimes: true, user: true });
+      const searchId = useId();
 
       useEffect(() => {
         let cancelled = false;
+        setError(null);
         (async () => {
           try {
             const response = await fetch(API, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -434,7 +512,7 @@ window.__ModuleLoader__.load({
           }
         })();
         return () => { cancelled = true; };
-      }, []);
+      }, [request]);
 
       const capabilities = report !== null && report.capabilities !== null && typeof report.capabilities === 'object'
         ? report.capabilities
@@ -453,52 +531,43 @@ window.__ModuleLoader__.load({
         user: sortForDisplay(groups.user),
       }), [groups]);
       const stats = summarize(report);
-      const nothingMatched = query.trim() !== ''
+      const nothingMatches = query.trim() !== ''
         && tools.length + skills.length + mcpTools.length + filteredCommands.length === 0;
 
-      const toggle = (key) => setOpen((current) => ({ ...current, [key]: current[key] !== true }));
+      const toggleGroup = (key) => setOpen((current) => ({ ...current, [key]: current[key] !== true }));
+      const toggleCard = (key) => setExpanded((current) => (current === key ? null : key));
 
-      /** 渲染一组卡片（空则显示一句说明）。 */
-      const renderCards = (key, list, cards, emptyKey) => {
-        const capped = capRows(cards);
-        return h(Group, {
-          key,
-          title: t(GROUP_LABEL[key]),
-          count: list.length,
-          facts: factsOf(key),
-          open: open[key] === true,
-          onToggle: () => toggle(key),
-          t,
-        },
-          list.length === 0 ? h('p', { className: 'ciEmpty' }, t(emptyKey)) : null,
-          list.length === 0 ? null : h('ul', { className: 'ciCards' }, capped.rows),
-          capped.hidden === 0 ? null : h('p', { className: 'ciNote' }, t('hidden', { count: capped.hidden })));
-      };
-
-      /** 每一组的副行事实（照官方 groupSub 的用法：几条短事实用 `·` 连起来）。 */
-      const factsOf = (key) => {
-        if (key === 'tools') return [t('sub.tools')];
-        if (key === 'skills') return [t('sub.skills')];
-        if (key === 'mcp') {
+      /** 组的副行事实（照官方：计数也是其中一项）。 */
+      const factsOf = (key, count) => {
+        const facts = [String(count) + ' ' + t('countUnit')];
+        if (key === 'tools') facts.push(t('sub.tools'));
+        else if (key === 'skills') facts.push(t('sub.skills'));
+        else if (key === 'mcp') {
           const servers = Array.isArray(mcp.servers) ? mcp.servers : [];
-          return [servers.length === 0 ? t('sub.mcpNone') : t('sub.mcp', { servers: servers.join(', ') })];
+          facts.push(servers.length === 0 ? t('sub.mcpNone') : t('sub.mcp', { servers: servers.join(', ') }));
+        } else if (key === 'runtimes') facts.push(t('sub.runtimes'));
+        else {
+          facts.push(t('sub.user', { scanned: stats.scannedDirCount, dirs: stats.pathCount }));
+          if (stats.withVersion > 0) facts.push(t('sub.versions', { withVersion: stats.withVersion }));
+          if (stats.truncated) facts.push(t('sub.truncated'));
         }
-        if (key === 'runtimes') return [t('sub.runtimes')];
-        const facts = [t('sub.user', { scanned: stats.scannedDirCount, dirs: stats.pathCount })];
-        if (stats.withVersion > 0) facts.push(t('sub.versions', { withVersion: stats.withVersion }));
-        if (stats.truncated) facts.push(t('sub.truncated'));
         return facts;
       };
 
-      /** 命令卡片：描述放版本行，等宽标签放路径。 */
+      /** 命令卡片：描述放版本行，等宽身份标签放路径，展开看版本与路径。 */
       const commandCards = (list) => list.map((entry) => {
         const hasVersion = typeof entry.version === 'string' && entry.version !== '';
+        const key = 'cmd:' + entry.name + entry.path;
         return h(Card, {
-          key: entry.name + entry.path,
+          key,
           title: entry.name,
           description: hasVersion ? entry.version : t('noVersion'),
           descriptionMissing: !hasVersion,
           identity: entry.path,
+          facts: factsFor(entry, t),
+          open: expanded === key,
+          onToggle: () => toggleCard(key),
+          t,
         });
       });
 
@@ -510,29 +579,59 @@ window.__ModuleLoader__.load({
         const identity = typeof entry.server === 'string' && entry.server !== ''
           ? entry.server
           : (typeof entry.provider === 'string' ? entry.provider : '');
-        return h(Card, { key: entry.name, title: entry.name, description, identity });
+        const key = 'cap:' + entry.name;
+        return h(Card, {
+          key,
+          title: entry.name,
+          description,
+          identity,
+          facts: factsFor(entry, t),
+          open: expanded === key,
+          onToggle: () => toggleCard(key),
+          t,
+        });
       });
 
-      return h('div', { className: 'ciSection' },
-        h('div', { className: 'ciSearch' },
-          h(SearchIcon, {}),
-          h('input', {
-            type: 'search',
-            'aria-label': t('search'),
-            placeholder: t('search'),
-            value: query,
-            onChange: (event) => setQuery(event.target.value),
-          })),
-        error === null ? null : h('p', { className: 'ciError' }, t('failed', { reason: error })),
-        report === null && error === null ? Skeleton(t('loading')) : null,
-        report === null ? null : h('div', null,
-          nothingMatched ? h('p', { className: 'ciEmpty' }, t('empty')) : null,
-          renderCards('tools', tools, capabilityCards(tools), 'empty.tools'),
-          renderCards('skills', skills, capabilityCards(skills), 'empty.skills'),
-          renderCards('mcp', mcpTools, capabilityCards(mcpTools), 'empty.mcp'),
-          rows.runtimes.length === 0 ? null : renderCards('runtimes', rows.runtimes, commandCards(rows.runtimes), 'empty'),
-          rows.user.length === 0 ? null : renderCards('user', rows.user, commandCards(rows.user), 'empty')),
-        h('p', { className: 'ciNote' }, t('note')));
+      /** 渲染一组卡片（空则一句话说明）。 */
+      const renderGroup = (key, list, cards, emptyKey) => {
+        const capped = capRows(cards);
+        return h(Group, {
+          key,
+          title: t(GROUP_LABEL[key]),
+          facts: factsOf(key, list.length),
+          open: open[key] === true,
+          onToggle: () => toggleGroup(key),
+          t,
+        },
+          list.length === 0 ? h('p', { className: 'ciStatus' }, t(emptyKey)) : null,
+          list.length === 0 ? null : h('ul', { className: 'ciCards' }, capped.rows),
+          capped.hidden === 0 ? null : h('p', { className: 'ciStatus' }, t('hidden', { count: capped.hidden })));
+      };
+
+      return h('div', { className: 'ciSection', 'aria-busy': report === null && error === null },
+        error === null ? null : h('div', { className: 'ciFailure' },
+          h('p', { role: 'alert' }, t('failed', { reason: error })),
+          h('button', { type: 'button', onClick: () => setRequest((value) => value + 1) }, t('retry'))),
+        report === null && error === null ? h(SkeletonCards, { label: t('loading') }) : null,
+        report === null ? null : h('div', { className: 'ciCatalog' },
+          h('label', { className: 'ciSearch', htmlFor: searchId },
+            h(SearchIcon, {}),
+            h('span', { className: 'ciVisuallyHidden' }, t('search')),
+            h('input', {
+              id: searchId,
+              type: 'search',
+              value: query,
+              placeholder: t('search'),
+              'aria-label': t('search'),
+              onChange: (event) => setQuery(event.currentTarget.value),
+            })),
+          nothingMatches ? h('p', { className: 'ciStatus' }, t('empty')) : null,
+          renderGroup('tools', tools, capabilityCards(tools), 'empty.tools'),
+          renderGroup('skills', skills, capabilityCards(skills), 'empty.skills'),
+          renderGroup('mcp', mcpTools, capabilityCards(mcpTools), 'empty.mcp'),
+          rows.runtimes.length === 0 ? null : renderGroup('runtimes', rows.runtimes, commandCards(rows.runtimes), 'empty'),
+          rows.user.length === 0 ? null : renderGroup('user', rows.user, commandCards(rows.user), 'empty')),
+        report === null ? null : h('p', { className: 'ciNote' }, t('note')));
     }
 
     // ========================================================================
