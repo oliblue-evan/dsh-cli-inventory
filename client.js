@@ -67,10 +67,18 @@ window.__ModuleLoader__.load({
       const list = Array.isArray(entries) ? entries : [];
       const needle = String(query === undefined || query === null ? '' : query).trim().toLowerCase();
       if (needle === '') return list;
+      const hit = (field) => {
+        if (typeof field === 'string') return field.toLowerCase().includes(needle);
+        // 参数名 / 必填项是数组：搜 "offset" 应该能找到 read 这种工具。
+        if (Array.isArray(field)) {
+          return field.some((item) => typeof item === 'string' && item.toLowerCase().includes(needle));
+        }
+        return false;
+      };
       return list.filter((entry) => {
         if (entry === null || typeof entry !== 'object') return false;
-        return [entry.name, entry.description, entry.whenToUse, entry.version, entry.path, entry.server]
-          .some((field) => typeof field === 'string' && field.toLowerCase().includes(needle));
+        return [entry.name, entry.description, entry.whenToUse, entry.version, entry.path, entry.server,
+          entry.params, entry.required].some(hit);
       });
     }
 
@@ -174,6 +182,10 @@ window.__ModuleLoader__.load({
       if (typeof entry.tool === 'string' && entry.tool !== '') push(t('fact.rawName'), entry.tool);
       if (typeof entry.provider === 'string' && entry.provider !== '') push(t('fact.provider'), entry.provider);
       if (typeof entry.whenToUse === 'string' && entry.whenToUse !== '') push(t('fact.whenToUse'), entry.whenToUse);
+      // 工具的参数是"展开才有内容"的关键：卡片正文就是描述，没有参数的话展开只是
+      // 取消两行截断 —— 说明本来就短的工具点了等于没反应。
+      if (Array.isArray(entry.params) && entry.params.length > 0) push(t('fact.params'), entry.params.join(' · '));
+      if (Array.isArray(entry.required) && entry.required.length > 0) push(t('fact.required'), entry.required.join(' · '));
       return rows;
     }
 
@@ -201,6 +213,7 @@ window.__ModuleLoader__.load({
       'group.runtimes': 'DSH 自带运行时',
       'group.user': '你自己安装的',
       'sub.tools': '来自宿主工具注册表',
+      'sub.toolsScope': '按预设 {preset}',
       'sub.skills': '来自 ~/.dsh/skills 与技能提供者',
       'sub.mcp': '服务器：{servers}',
       'sub.mcpNone': '未配置服务器',
@@ -212,6 +225,8 @@ window.__ModuleLoader__.load({
       'fact.rawName': '原始工具名',
       'fact.provider': '提供者',
       'fact.whenToUse': '何时使用',
+      'fact.params': '参数',
+      'fact.required': '必填',
       'empty.tools': '读不到工具注册表（宿主未提供 tools 服务）。',
       'empty.skills': '还没有技能。把技能放到 ~/.dsh/skills/<名字>/SKILL.md 就会出现。',
       'empty.mcp': '还没有配置 MCP 服务器；配置后它们贡献的工具会出现在这里。',
@@ -238,6 +253,7 @@ window.__ModuleLoader__.load({
       'group.runtimes': 'Bundled DSH runtimes',
       'group.user': 'Installed by you',
       'sub.tools': 'from the host tool registry',
+      'sub.toolsScope': 'as preset {preset}',
       'sub.skills': 'from ~/.dsh/skills and skill providers',
       'sub.mcp': 'servers: {servers}',
       'sub.mcpNone': 'no server configured',
@@ -249,6 +265,8 @@ window.__ModuleLoader__.load({
       'fact.rawName': 'raw tool name',
       'fact.provider': 'provider',
       'fact.whenToUse': 'when to use',
+      'fact.params': 'parameters',
+      'fact.required': 'required',
       'empty.tools': 'The tool registry is unavailable (no `tools` service on this host).',
       'empty.skills': 'No skills yet. Drop one at ~/.dsh/skills/<name>/SKILL.md and it shows up here.',
       'empty.mcp': 'No MCP server configured yet; the tools it contributes will appear here.',
@@ -422,6 +440,7 @@ window.__ModuleLoader__.load({
      */
     function Card({ title, description, descriptionMissing, identity, facts, open, onToggle, t }) {
       const detailId = useId();
+      const descriptionId = useId();
       const hasDescription = typeof description === 'string' && description !== '';
       const hasIdentity = typeof identity === 'string' && identity !== '';
       const rows = Array.isArray(facts) ? facts : [];
@@ -434,6 +453,8 @@ window.__ModuleLoader__.load({
           className: 'ciCardContent',
           'aria-expanded': open,
           'aria-controls': hasReveal ? detailId : undefined,
+          // 官方把描述用 aria-describedby 挂在按钮上，读屏时会一起念出来
+          'aria-describedby': hasDescription ? descriptionId : undefined,
           'aria-label': title + ' — ' + t(open ? 'collapse' : 'expand'),
           onClick: onToggle,
         },
@@ -442,6 +463,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'ciCardTrailing' }, h(ChevronDown, {}))),
           hasDescription ? h('span', {
             className: 'ciCardDescription',
+            id: descriptionId,
             'data-missing': descriptionMissing === true ? 'true' : undefined,
           }, description) : null,
           hasIdentity ? h('span', { className: 'ciCardMeta' },
@@ -473,6 +495,7 @@ window.__ModuleLoader__.load({
      * @returns 组元素。
      */
     function Group({ title, facts, children, open, onToggle, t }) {
+      const bodyId = useId();
       const items = Array.isArray(facts) ? facts.filter((item) => typeof item === 'string' && item !== '') : [];
       return h('section', { className: 'ciGroup' },
         h('div', { className: 'ciGroupTitleRow' },
@@ -480,6 +503,7 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'ciGroupToggle',
             'aria-expanded': open,
+            'aria-controls': bodyId,
             title: open ? t('collapse') : t('expand'),
             onClick: onToggle,
           },
@@ -487,7 +511,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'ciGroupTitle' }, title))),
         items.length === 0 ? null : h('p', { className: 'ciGroupSub' },
           items.map((item, index) => h('span', { key: item + index }, item))),
-        open ? h('div', { className: 'ciGroupBody' }, children) : null);
+        open ? h('div', { className: 'ciGroupBody', id: bodyId }, children) : null);
     }
 
     /**
@@ -551,7 +575,14 @@ window.__ModuleLoader__.load({
       /** 组的副行事实（照官方：计数也是其中一项）。 */
       const factsOf = (key, count) => {
         const facts = [String(count) + ' ' + t('countUnit')];
-        if (key === 'tools') facts.push(t('sub.tools'));
+        if (key === 'tools') {
+          facts.push(t('sub.tools'));
+          // 工具是从"预设作用域"读的（不是全局视图），来源如实写出来
+          const scope = capabilities.toolsScope;
+          if (scope !== null && typeof scope === 'object' && scope.scoped === true && typeof scope.preset === 'string') {
+            facts.push(t('sub.toolsScope', { preset: scope.preset }));
+          }
+        }
         else if (key === 'skills') facts.push(t('sub.skills'));
         else if (key === 'mcp') {
           const servers = Array.isArray(mcp.servers) ? mcp.servers : [];

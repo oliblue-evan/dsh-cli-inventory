@@ -178,6 +178,53 @@ console.log('✓ 能力段容错：宿主未提供 tools/skills 服务时如实�
   assert.deepEqual(caps.capabilities.mcp.tools.map((entry) => entry.tool), ['create_issue']);
   assert.deepEqual(caps.capabilities.skills.map((entry) => entry.name), ['pdf']);
   assert.equal(caps.capabilities.skills[0].whenToUse, undefined, '非字符串字段不得下发');
+
+  // 8) 工具必须**带作用域**读：省略 scope 只有全局视图（实测 1 个），
+  //    带上预设作用域的租约才能拿到 Agent 真正那批（实测 40 个）。
+  {
+    const scopedRoutes = [];
+    let disposed = 0;
+    let acquired = 0;
+    const globalOnly = [{ name: 'load_workspace_dependencies', description: '全局那个' }];
+    const scoped = [
+      { name: 'read', description: '读文件', parameters: { type: 'object', properties: { file_path: {}, offset: {} }, required: ['file_path'] } },
+      { name: 'load_workspace_dependencies', description: '全局那个' },
+    ];
+    const scopedCtx = {
+      effect(fn) { const dispose = fn(); return () => { if (typeof dispose === 'function') dispose(); }; },
+      webServer: { register(r) { scopedRoutes.push(r); return () => {}; } },
+      get(name) {
+        if (name === 'tools') return { schemas: (scope) => (scope === undefined ? globalOnly : scoped) };
+        if (name === 'agentPresets') {
+          return {
+            resolve: async () => ({ id: 'default', isDefault: true }),
+            acquireScope: async () => {
+              acquired += 1;
+              return { key: {}, [Symbol.asyncDispose]: async () => { disposed += 1; } };
+            },
+          };
+        }
+        if (name === 'skills') return { list: async () => [] };
+        return undefined;
+      },
+    };
+    apply(scopedCtx);
+    const withScope = await new Promise((resolve, reject) => {
+      const res = { statusCode: 0, setHeader() {}, end(body) { resolve(JSON.parse(String(body))); } };
+      Promise.resolve(scopedRoutes[0].handler(
+        { method: 'GET', headers: { host: '127.0.0.1:19387' }, url: '/api/cli-inventory/list' }, res,
+      )).catch(reject);
+    });
+    assert.deepEqual(withScope.capabilities.tools.map((entry) => entry.name), ['load_workspace_dependencies', 'read'],
+      '应读到作用域视图（2 个），不是全局视图（1 个）');
+    assert.deepEqual(withScope.capabilities.tools.find((entry) => entry.name === 'read').params,
+      ['file_path', 'offset'], '参数名应下发');
+    assert.deepEqual(withScope.capabilities.tools.find((entry) => entry.name === 'read').required, ['file_path']);
+    assert.equal(acquired, 1, '应借一次作用域租约');
+    assert.equal(disposed, 1, '读完必须释放租约（AsyncDisposable）');
+    assert.deepEqual(withScope.capabilities.toolsScope, { preset: 'default', scoped: true });
+    console.log('✓ 工具按作用域读取：', withScope.capabilities.tools.length, '个（租约获取', acquired, '/ 释放', disposed, '）· 预设', withScope.capabilities.toolsScope.preset);
+  }
   console.log('✓ 能力段读取：工具', caps.capabilities.tools.length, '个 · MCP 服务器',
     caps.capabilities.mcp.servers.join(','), '· 技能', caps.capabilities.skills.length, '个');
 }

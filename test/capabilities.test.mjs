@@ -7,7 +7,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MCP_TOOL_PREFIX, normalizeSkill, normalizeTool, parseMcpToolName, sortByName, summarizeCapabilities,
+  MCP_TOOL_PREFIX, normalizeSkill, normalizeTool, parseMcpToolName, readParameters, sortByName,
+  summarizeCapabilities,
 } from '../lib/capabilities.js';
 
 test('MCP 工具名拆解：mcp__<服务器>__<工具>，只按第一个 __ 切', () => {
@@ -25,9 +26,27 @@ test('MCP 工具名拆解：mcp__<服务器>__<工具>，只按第一个 __ 切'
   assert.equal(MCP_TOOL_PREFIX, 'mcp__');
 });
 
-test('工具归一化：只取名称与描述，脏条目返回 null', () => {
+test('参数解析：从 ToolSchema.parameters 里取参数名与必填项，形状不对就当没有', () => {
+  assert.deepEqual(
+    readParameters({ type: 'object', properties: { file_path: {}, offset: {}, limit: {} }, required: ['file_path'] }),
+    { params: ['file_path', 'offset', 'limit'], required: ['file_path'] },
+  );
+  // 契约里 parameters 的类型只是 Record<string, unknown>，所以脏形状一律安全退化
+  assert.deepEqual(readParameters(undefined), { params: [], required: [] });
+  assert.deepEqual(readParameters(null), { params: [], required: [] });
+  assert.deepEqual(readParameters('nope'), { params: [], required: [] });
+  assert.deepEqual(readParameters({ properties: [] }), { params: [], required: [] }, 'properties 是数组 → 不认');
+  assert.deepEqual(readParameters({ properties: { a: {} }, required: ['a', 42, ''] }).required, ['a'], '脏 required 项被过滤');
+  assert.deepEqual(readParameters({ properties: { '': {} } }).params, [], '空键名不算参数');
+});
+
+test('工具归一化：取名称 / 描述 / 参数，脏条目返回 null', () => {
   assert.deepEqual(normalizeTool({ name: 'read', description: '读取文件', parameters: { type: 'object' } }),
-    { name: 'read', description: '读取文件', mcp: null });
+    { name: 'read', description: '读取文件', params: [], required: [], mcp: null });
+  assert.deepEqual(
+    normalizeTool({ name: 'read', parameters: { properties: { file_path: {} }, required: ['file_path'] } }),
+    { name: 'read', description: '', params: ['file_path'], required: ['file_path'], mcp: null },
+  );
   assert.deepEqual(normalizeTool({ name: 'mcp__gh__issue' }).mcp, { server: 'gh', tool: 'issue' });
   assert.deepEqual(normalizeTool({ name: 'x' }).description, '', '缺描述时给空串而不是 undefined');
   assert.equal(normalizeTool(null), null);

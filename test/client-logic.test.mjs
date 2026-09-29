@@ -36,6 +36,17 @@ test('过滤：空关键词原样返回；命中名称/版本/路径任一即可
   assert.deepEqual(c.filterEntries(capabilities, '处理').map((e) => e.name), ['pdf'], '按描述过滤');
   assert.deepEqual(c.filterEntries(capabilities, '用户提到').map((e) => e.name), ['pdf'], '按 whenToUse 过滤');
   assert.deepEqual(c.filterEntries(capabilities, 'github').map((e) => e.name), ['mcp__github__issue'], '按服务器过滤');
+  // 参数名与必填项也要能搜到（它们是数组字段）
+  const withParams = [
+    { name: 'read', description: '读文件', params: ['file_path', 'offset', 'limit'], required: ['file_path'] },
+    { name: 'bash', description: '跑命令', params: ['command'], required: ['command'] },
+  ];
+  assert.deepEqual(c.filterEntries(withParams, 'offset').map((e) => e.name), ['read'], '按参数名过滤');
+  assert.deepEqual(c.filterEntries(withParams, 'command').map((e) => e.name), ['bash'], '按必填项过滤');
+  assert.deepEqual(c.filterEntries([{ name: 'x', params: 42, required: null }], 'x').map((e) => e.name), ['x'],
+    'params/required 是非字符串非数组的脏值时安全跳过（仍按名称命中）');
+  assert.deepEqual(c.filterEntries([{ name: 'y', params: 42 }], '42').map((e) => e.name), [],
+    '脏值不参与匹配，也不会抛错');
 });
 
 test('分组：harness → 运行时段，其余 → 你自己装的（系统目录宿主根本不扫）', () => {
@@ -134,11 +145,15 @@ test('展开的详情不得重复卡片上已有的内容（说明 / 版本）�
     whenToUse: '当用户要求处理 Word 文档',
     server: 'github',
     tool: 'create_issue',
+    params: ['file_path', 'offset'],
+    required: ['file_path'],
   };
   const rows = c.factsFor(entry, identity);
   const labels = rows.map(([label]) => label);
   const values = rows.map(([, value]) => value);
-  assert.deepEqual(labels, ['fact.server', 'fact.rawName', 'fact.provider', 'fact.whenToUse']);
+  assert.deepEqual(labels, ['fact.server', 'fact.rawName', 'fact.provider', 'fact.whenToUse', 'fact.params', 'fact.required']);
+  assert.ok(values.includes('file_path · offset'), '参数是展开后真正的新内容，应当出现');
+  assert.ok(values.includes('file_path'), '必填项应出现');
   assert.ok(!values.includes(entry.description), '详情里不得再出现说明');
   assert.ok(!values.includes(entry.version), '详情里不得再出现版本（它就是卡片的描述行）');
   assert.ok(!values.includes(entry.path), '路径由 identity → entryValue 呈现，不走 fact');

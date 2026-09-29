@@ -261,18 +261,64 @@ async function scanHarnessRuntimes() {
 async function scanCapabilities(ctx) {
   const tools = [];
   const mcpTools = [];
+  let toolsScope = { preset: undefined, scoped: false };
 
-  // 工具注册表：MCP 贡献的按命名约定（mcp__<server>__<tool>）拆到单独的段
+  // 工具注册表。
+  //
+  // 【为什么必须带 scope】`tools.schemas()` 省略 scope 拿到的是**全局视图** ——
+  // 实测只有 1 个（load_workspace_dependencies 这类不带作用域的），而 Agent 真正
+  // 拿到的是 40 个：read/write/bash/web_search/subagent… 都注册在**预设作用域**里。
+  // 契约原文：`schemas(scope?)` 的 scope 是"the viewing scope (the agent);
+  // omitted = the global view"。
+  //
+  // 所以这里借一个预设作用域的租约（`agentPresets.acquireScope()`，官方给的用法是
+  // "cold transcript presentation"：拿租约 → 读 → 释放），读完立刻释放。
   try {
     const registry = ctx.get('tools');
     if (registry !== undefined && typeof registry.schemas === 'function') {
-      for (const raw of registry.schemas()) {
-        const entry = normalizeTool(raw);
-        if (entry === null) continue;
-        if (entry.mcp === null) tools.push({ name: entry.name, description: entry.description });
-        else mcpTools.push({
-          name: entry.name, server: entry.mcp.server, tool: entry.mcp.tool, description: entry.description,
-        });
+      const presets = ctx.get('agentPresets');
+      let lease;
+      let presetId;
+      if (presets !== undefined && typeof presets.acquireScope === 'function') {
+        try {
+          if (typeof presets.resolve === 'function') {
+            const preset = await presets.resolve();
+            presetId = preset !== undefined && preset !== null ? preset.id : undefined;
+          }
+          lease = await presets.acquireScope();
+        } catch {
+          lease = undefined; // 拿不到作用域就退回全局视图，不让整页失败
+        }
+      }
+      try {
+        const visible = registry.schemas(lease === undefined ? undefined : lease.key);
+        if (Array.isArray(visible)) {
+          toolsScope = { preset: presetId, scoped: lease !== undefined };
+          for (const raw of visible) {
+            const entry = normalizeTool(raw);
+            if (entry === null) continue;
+            if (entry.mcp === null) {
+              tools.push({
+                name: entry.name, description: entry.description, params: entry.params, required: entry.required,
+              });
+            } else {
+              mcpTools.push({
+                name: entry.name, server: entry.mcp.server, tool: entry.mcp.tool,
+                description: entry.description, params: entry.params, required: entry.required,
+              });
+            }
+          }
+        }
+      } finally {
+        // 官方要求：读完就释放租约（AsyncDisposable）。
+        if (lease !== undefined) {
+          const dispose = typeof lease[Symbol.asyncDispose] === 'function'
+            ? lease[Symbol.asyncDispose].bind(lease)
+            : (typeof lease.dispose === 'function' ? lease.dispose.bind(lease) : undefined);
+          if (dispose !== undefined) {
+            try { await dispose(); } catch { /* 释放失败不该影响这次读 */ }
+          }
+        }
       }
     }
   } catch {
@@ -298,6 +344,7 @@ async function scanCapabilities(ctx) {
     tools: sortByName(tools),
     skills: sortByName(skills),
     mcp: { servers: summary.mcpServers, tools: sortByName(mcpTools) },
+    toolsScope,
   };
 }
 
